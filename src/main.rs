@@ -108,48 +108,72 @@ fn validate_resources(resources: &HashMap<String, Resource>) -> Result<()> {
     Ok(())
 }
 
-struct ResourceListItem {
+struct SimpleListItem {
     id: String,
     name: String,
 }
 
-struct RouteListResources<'a> {
-    resources: &'a HashMap<String, Resource>,
-    resource_list_model: Vec<ResourceListItem>,
-    resource_list_state: ListState,
+struct RouteListResources {
+    list_model: Vec<SimpleListItem>,
+    list_state: ListState,
 }
 
-impl<'a> RouteListResources<'a> {
-    fn new(resources: &'a HashMap<String, Resource>) -> Self {
-        let mut resource_list_model: Vec<ResourceListItem> = resources
+impl RouteListResources {
+    fn new(resources: &HashMap<String, Resource>) -> Self {
+        let mut list_model: Vec<SimpleListItem> = resources
             .iter()
-            .map(|(id, resource)| ResourceListItem {
+            .map(|(id, resource)| SimpleListItem {
                 id: id.clone(),
                 name: resource.name.clone(),
             })
             .collect();
-        resource_list_model.sort_by_cached_key(|item| item.name.to_lowercase());
+        list_model.sort_by_cached_key(|item| item.name.to_lowercase());
 
-        let mut resource_list_state = ListState::default();
-        if !resource_list_model.is_empty() {
-            resource_list_state.select(Some(0));
+        let mut list_state = ListState::default();
+        if !list_model.is_empty() {
+            list_state.select(Some(0));
         }
 
         Self {
-            resources,
-            resource_list_model,
-            resource_list_state,
+            list_model,
+            list_state,
         }
+    }
+
+    fn handle_keypress(&mut self, key: KeyEvent) -> Option<Action> {
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => {
+                return Some(Action::Back);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.list_state.select_previous();
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.list_state.select_next();
+            }
+            KeyCode::Enter => {
+                if let Some(selected) = self.list_state.selected() {
+                    if let Some(resource) = self.list_model.get(selected) {
+                        return Some(Action::OpenResource {
+                            resource_id: resource.id.clone(),
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        None
     }
 }
 
-impl<'a> Widget for &mut RouteListResources<'a> {
+impl Widget for &mut RouteListResources {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let block = Block::new()
             .title(Line::raw("Resources").centered())
             .borders(Borders::TOP);
         let items: Vec<ListItem> = self
-            .resource_list_model
+            .list_model
             .iter()
             .map(|r| ListItem::new(r.name.clone()))
             .collect();
@@ -157,20 +181,82 @@ impl<'a> Widget for &mut RouteListResources<'a> {
             .block(block)
             .highlight_symbol("> ")
             .highlight_spacing(ratatui::widgets::HighlightSpacing::Always);
-        StatefulWidget::render(list, area, buf, &mut self.resource_list_state);
+        StatefulWidget::render(list, area, buf, &mut self.list_state);
     }
 }
 
-enum AppRoute<'a> {
-    ListResources(RouteListResources<'a>),
+struct RouteSearchResource {
+    block_title: String,
+    list_model: Vec<SimpleListItem>,
+    list_state: ListState,
 }
 
-enum Action {}
+impl RouteSearchResource {
+    fn new(resource: &Resource) -> Self {
+        let mut list_model: Vec<SimpleListItem> = resource
+            .search
+            .keys()
+            .map(|name| SimpleListItem {
+                id: name.clone(),
+                name: name.clone(),
+            })
+            .collect();
+        list_model.sort_by_cached_key(|item| item.name.to_lowercase());
+
+        let mut list_state = ListState::default();
+        if !list_model.is_empty() {
+            list_state.select(Some(0));
+        }
+
+        Self {
+            block_title: format!("Search {} by...", resource.name.to_lowercase()),
+            list_model,
+            list_state,
+        }
+    }
+
+    fn handle_keypress(&mut self, key: KeyEvent) -> Option<Action> {
+        match key.code {
+            KeyCode::Esc => return Some(Action::Back),
+            _ => {}
+        }
+
+        None
+    }
+}
+
+impl Widget for &mut RouteSearchResource {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let block = Block::new()
+            .title(Line::raw(&self.block_title).centered())
+            .borders(Borders::TOP);
+        let items: Vec<ListItem> = self
+            .list_model
+            .iter()
+            .map(|r| ListItem::new(r.name.clone()))
+            .collect();
+        let list = List::new(items)
+            .block(block)
+            .highlight_symbol("> ")
+            .highlight_spacing(ratatui::widgets::HighlightSpacing::Always);
+        StatefulWidget::render(list, area, buf, &mut self.list_state);
+    }
+}
+
+enum AppRoute {
+    ListResources(RouteListResources),
+    SearchResource(RouteSearchResource),
+}
+
+enum Action {
+    Back,
+    OpenResource { resource_id: String },
+}
 
 struct App<'a> {
     resources: &'a HashMap<String, Resource>,
     should_exit: bool,
-    route: AppRoute<'a>,
+    route: AppRoute,
 }
 
 impl<'a> App<'a> {
@@ -196,22 +282,33 @@ impl<'a> App<'a> {
         if key.kind != KeyEventKind::Press {
             return;
         }
-        match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => self.should_exit = true,
-            _ => {}
-        }
-        match &mut self.route {
-            AppRoute::ListResources(route) => {
-                App::handle_keypress_list_resources(route, key);
-            }
+
+        if let Some(action) = match &mut self.route {
+            AppRoute::ListResources(route) => route.handle_keypress(key),
+            AppRoute::SearchResource(route) => route.handle_keypress(key),
+            _ => None,
+        } {
+            match action {
+                Action::OpenResource { resource_id } => {
+                    let resource = self
+                        .resources
+                        .get(&resource_id)
+                        .expect("invalid resource id from resource list select");
+                    self.route = AppRoute::SearchResource(RouteSearchResource::new(resource));
+                }
+                Action::Back => self.back(),
+            };
         }
     }
 
-    fn handle_keypress_list_resources(route: &mut RouteListResources, key: KeyEvent) {
-        match key.code {
-            KeyCode::Char('k') | KeyCode::Up => route.resource_list_state.select_previous(),
-            KeyCode::Char('j') | KeyCode::Down => route.resource_list_state.select_next(),
-            _ => {}
+    fn back(&mut self) {
+        match self.route {
+            AppRoute::ListResources(..) => {
+                self.should_exit = true;
+            }
+            AppRoute::SearchResource(..) => {
+                self.route = AppRoute::ListResources(RouteListResources::new(self.resources))
+            }
         }
     }
 
@@ -224,9 +321,8 @@ impl<'a> App<'a> {
 
     fn render_route(&mut self, area: Rect, buf: &mut Buffer) {
         match &mut self.route {
-            AppRoute::ListResources(route) => {
-                route.render(area, buf);
-            }
+            AppRoute::ListResources(route) => route.render(area, buf),
+            AppRoute::SearchResource(route) => route.render(area, buf),
         }
     }
 }
