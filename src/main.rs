@@ -1,17 +1,11 @@
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::{collections::HashMap, fs};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use ratatui::DefaultTerminal;
-use ratatui::buffer::Buffer;
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
-use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::Stylize;
-use ratatui::text::Line;
-use ratatui::widgets::{
-    Block, Borders, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
-};
+use cursive::view::Nameable;
+use cursive::views;
 use serde::Deserialize;
 
 #[derive(Parser)]
@@ -30,32 +24,40 @@ struct Args {
     resources_file: PathBuf,
 }
 
-#[derive(Debug, Deserialize)]
-struct SearchParam {
-    name: String,
+#[derive(Clone, Debug, Deserialize)]
+enum SearchParamType {
+    #[serde(rename = "integer")]
+    Integer,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
+struct SearchParam {
+    name: String,
+    #[serde(rename = "type")]
+    ty: Option<SearchParamType>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 struct Search {
     query: String,
     params: Vec<SearchParam>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
 enum LinkSearchParam {
     Name(String),
     JsonDeref { json_deref: Vec<String> },
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct Link {
     kind: String,
     search: String,
     search_params: Vec<LinkSearchParam>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct Resource {
     name: String,
     search: HashMap<String, Search>,
@@ -108,238 +110,12 @@ fn validate_resources(resources: &HashMap<String, Resource>) -> Result<()> {
     Ok(())
 }
 
-struct SimpleListItem {
-    id: String,
-    name: String,
+struct AppData {
+    resources: HashMap<String, Resource>,
+    db: postgres::Client,
 }
 
-struct RouteListResources {
-    list_model: Vec<SimpleListItem>,
-    list_state: ListState,
-}
-
-impl RouteListResources {
-    fn new(resources: &HashMap<String, Resource>) -> Self {
-        let mut list_model: Vec<SimpleListItem> = resources
-            .iter()
-            .map(|(id, resource)| SimpleListItem {
-                id: id.clone(),
-                name: resource.name.clone(),
-            })
-            .collect();
-        list_model.sort_by_cached_key(|item| item.name.to_lowercase());
-
-        let mut list_state = ListState::default();
-        if !list_model.is_empty() {
-            list_state.select(Some(0));
-        }
-
-        Self {
-            list_model,
-            list_state,
-        }
-    }
-
-    fn handle_keypress(&mut self, key: KeyEvent) -> Option<Action> {
-        match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => {
-                return Some(Action::Back);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.list_state.select_previous();
-            }
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.list_state.select_next();
-            }
-            KeyCode::Enter => {
-                if let Some(selected) = self.list_state.selected() {
-                    if let Some(resource) = self.list_model.get(selected) {
-                        return Some(Action::OpenResource {
-                            resource_id: resource.id.clone(),
-                        });
-                    }
-                }
-            }
-            _ => {}
-        }
-
-        None
-    }
-}
-
-impl Widget for &mut RouteListResources {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        let block = Block::new()
-            .title(Line::raw("Resources").centered())
-            .borders(Borders::TOP);
-        let items: Vec<ListItem> = self
-            .list_model
-            .iter()
-            .map(|r| ListItem::new(r.name.clone()))
-            .collect();
-        let list = List::new(items)
-            .block(block)
-            .highlight_symbol("> ")
-            .highlight_spacing(ratatui::widgets::HighlightSpacing::Always);
-        StatefulWidget::render(list, area, buf, &mut self.list_state);
-    }
-}
-
-struct RouteSearchResource {
-    block_title: String,
-    list_model: Vec<SimpleListItem>,
-    list_state: ListState,
-}
-
-impl RouteSearchResource {
-    fn new(resource: &Resource) -> Self {
-        let mut list_model: Vec<SimpleListItem> = resource
-            .search
-            .keys()
-            .map(|name| SimpleListItem {
-                id: name.clone(),
-                name: name.clone(),
-            })
-            .collect();
-        list_model.sort_by_cached_key(|item| item.name.to_lowercase());
-
-        let mut list_state = ListState::default();
-        if !list_model.is_empty() {
-            list_state.select(Some(0));
-        }
-
-        Self {
-            block_title: format!("Search {} by...", resource.name.to_lowercase()),
-            list_model,
-            list_state,
-        }
-    }
-
-    fn handle_keypress(&mut self, key: KeyEvent) -> Option<Action> {
-        match key.code {
-            KeyCode::Esc => return Some(Action::Back),
-            _ => {}
-        }
-
-        None
-    }
-}
-
-impl Widget for &mut RouteSearchResource {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        let block = Block::new()
-            .title(Line::raw(&self.block_title).centered())
-            .borders(Borders::TOP);
-        let items: Vec<ListItem> = self
-            .list_model
-            .iter()
-            .map(|r| ListItem::new(r.name.clone()))
-            .collect();
-        let list = List::new(items)
-            .block(block)
-            .highlight_symbol("> ")
-            .highlight_spacing(ratatui::widgets::HighlightSpacing::Always);
-        StatefulWidget::render(list, area, buf, &mut self.list_state);
-    }
-}
-
-enum AppRoute {
-    ListResources(RouteListResources),
-    SearchResource(RouteSearchResource),
-}
-
-enum Action {
-    Back,
-    OpenResource { resource_id: String },
-}
-
-struct App<'a> {
-    resources: &'a HashMap<String, Resource>,
-    should_exit: bool,
-    route: AppRoute,
-}
-
-impl<'a> App<'a> {
-    fn new(resources: &'a HashMap<String, Resource>) -> Self {
-        Self {
-            resources,
-            should_exit: false,
-            route: AppRoute::ListResources(RouteListResources::new(resources)),
-        }
-    }
-
-    pub fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
-        while !self.should_exit {
-            terminal.draw(|frame| frame.render_widget(&mut self, frame.area()))?;
-            if let Event::Key(key) = event::read()? {
-                self.handle_key(key);
-            };
-        }
-        Ok(())
-    }
-
-    fn handle_key(&mut self, key: KeyEvent) {
-        if key.kind != KeyEventKind::Press {
-            return;
-        }
-
-        if let Some(action) = match &mut self.route {
-            AppRoute::ListResources(route) => route.handle_keypress(key),
-            AppRoute::SearchResource(route) => route.handle_keypress(key),
-            _ => None,
-        } {
-            match action {
-                Action::OpenResource { resource_id } => {
-                    let resource = self
-                        .resources
-                        .get(&resource_id)
-                        .expect("invalid resource id from resource list select");
-                    self.route = AppRoute::SearchResource(RouteSearchResource::new(resource));
-                }
-                Action::Back => self.back(),
-            };
-        }
-    }
-
-    fn back(&mut self) {
-        match self.route {
-            AppRoute::ListResources(..) => {
-                self.should_exit = true;
-            }
-            AppRoute::SearchResource(..) => {
-                self.route = AppRoute::ListResources(RouteListResources::new(self.resources))
-            }
-        }
-    }
-
-    fn render_header(area: Rect, buf: &mut Buffer) {
-        Paragraph::new("dbdrill")
-            .bold()
-            .centered()
-            .render(area, buf);
-    }
-
-    fn render_route(&mut self, area: Rect, buf: &mut Buffer) {
-        match &mut self.route {
-            AppRoute::ListResources(route) => route.render(area, buf),
-            AppRoute::SearchResource(route) => route.render(area, buf),
-        }
-    }
-}
-
-impl<'a> Widget for &mut App<'a> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        let [header_area, main_area, _footer_area] = Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Fill(1),
-            Constraint::Length(1),
-        ])
-        .areas(area);
-
-        App::render_header(header_area, buf);
-        self.render_route(main_area, buf);
-    }
-}
+type AppDataPtr = Arc<Mutex<AppData>>;
 
 fn main() -> Result<()> {
     let args = Args::parse();
@@ -354,9 +130,205 @@ fn main() -> Result<()> {
 
     validate_resources(&resources).context("error validating resources")?;
 
-    let terminal = ratatui::init();
-    let app_result = App::new(&resources).run(terminal);
-    ratatui::restore();
+    println!("Connecting to the DB...");
+    let db = postgres::Client::connect(&args.db_dsn, postgres::NoTls)
+        .context("error connecting to DB")?;
 
-    app_result
+    let app_data = Arc::new(Mutex::new(AppData { resources, db }));
+
+    let mut siv = cursive::default();
+    siv.add_global_callback('q', |s| s.quit());
+
+    siv.add_layer(views::Dialog::around(build_resource_picker(Arc::clone(
+        &app_data,
+    ))));
+
+    siv.run();
+
+    Ok(())
+}
+
+fn build_resource_picker(app_data_ptr: AppDataPtr) -> impl cursive::view::View {
+    let mut select_view = views::SelectView::new();
+
+    {
+        let app_data = app_data_ptr.lock().unwrap();
+
+        for (k, v) in &app_data.resources {
+            select_view.add_item(&v.name, k.to_owned());
+        }
+    }
+
+    select_view.sort_by_label();
+    select_view.set_on_submit(move |s, resource_id| {
+        on_pick_resource(Arc::clone(&app_data_ptr), s, resource_id)
+    });
+
+    views::LinearLayout::vertical()
+        .child(views::TextView::new("Resources"))
+        .child(select_view)
+}
+
+fn on_pick_resource(app_data_ptr: AppDataPtr, siv: &mut cursive::Cursive, resource_id: &str) {
+    siv.pop_layer();
+    siv.add_layer(views::Dialog::around(build_search_picker(
+        app_data_ptr,
+        resource_id,
+    )));
+}
+
+fn build_search_picker(app_data_ptr: AppDataPtr, resource_id: &str) -> impl cursive::view::View {
+    let mut select_view = views::SelectView::new();
+
+    let r = {
+        let app_data = app_data_ptr.lock().unwrap();
+        app_data
+            .resources
+            .get(resource_id)
+            .expect("invalid resource id")
+            .clone()
+    };
+
+    for search in r.search.keys() {
+        select_view.add_item_str(search);
+    }
+
+    select_view.sort_by_label();
+
+    {
+        let resource_id = resource_id.to_owned();
+        select_view.set_on_submit(move |s, search| {
+            on_pick_search(Arc::clone(&app_data_ptr), s, &resource_id, search)
+        });
+    }
+
+    let title = format!("Search {} by...", &r.name);
+
+    views::LinearLayout::vertical()
+        .child(views::TextView::new(&title))
+        .child(select_view)
+}
+
+fn on_pick_search(
+    app_data_ptr: AppDataPtr,
+    siv: &mut cursive::Cursive,
+    resource_id: &str,
+    search_id: &str,
+) {
+    siv.pop_layer();
+    siv.add_layer(views::Dialog::around(build_query(
+        app_data_ptr,
+        resource_id,
+        search_id,
+    )));
+}
+
+fn build_query(
+    app_data_ptr: AppDataPtr,
+    resource_id: &str,
+    search_id: &str,
+) -> impl cursive::view::View {
+    let r = {
+        let app_data = app_data_ptr.lock().unwrap();
+        app_data
+            .resources
+            .get(resource_id)
+            .expect("invalid resource id")
+            .clone()
+    };
+
+    let s = r.search.get(search_id).expect("invalid search id");
+
+    let title = format!("Search {} by {}", &r.name, search_id);
+    let mut layout = views::LinearLayout::vertical().child(views::TextView::new(&title));
+
+    for param in &s.params {
+        let input = views::EditView::new().with_name(&param.name);
+        layout.add_child(views::Panel::new(input).title(&param.name));
+    }
+
+    {
+        let resource_id = resource_id.to_owned();
+        let search_id = search_id.to_owned();
+
+        layout.add_child(views::Button::new("Search", move |s| {
+            on_query(Arc::clone(&app_data_ptr), s, &resource_id, &search_id)
+        }));
+    }
+
+    layout
+}
+
+fn on_query_helper(
+    app_data_ptr: AppDataPtr,
+    siv: &mut cursive::Cursive,
+    resource_id: &str,
+    search_id: &str,
+) -> Result<Vec<postgres::Row>> {
+    let r = {
+        let app_data = app_data_ptr.lock().unwrap();
+        app_data
+            .resources
+            .get(resource_id)
+            .expect("invalid resource id")
+            .clone()
+    };
+    let s = r.search.get(search_id).expect("invalid search id");
+    let mut param_values: Vec<Box<dyn postgres::types::ToSql + Sync>> = Vec::new();
+
+    for param in &s.params {
+        let str_val: String = siv
+            .call_on_name(&param.name, |view: &mut views::EditView| view.get_content())
+            .expect("missing param view")
+            .as_ref()
+            .clone();
+        let val: Box<dyn postgres::types::ToSql + Sync> = match param.ty {
+            None => Box::new(str_val),
+            Some(SearchParamType::Integer) => {
+                let integer_val: i32 = str_val.parse().with_context(|| {
+                    format!(
+                        "error parsing parameter {} as string: {}",
+                        param.name, str_val
+                    )
+                })?;
+                Box::new(integer_val)
+            }
+        };
+        param_values.push(val);
+    }
+
+    let param_values_ref: Vec<&(dyn postgres::types::ToSql + Sync)> =
+        param_values.iter().map(|v| v.as_ref()).collect();
+
+    let mut app_data = app_data_ptr.lock().unwrap();
+    app_data
+        .db
+        .query(&s.query, &param_values_ref)
+        .context("error running SQL query")
+}
+
+fn on_query(
+    app_data_ptr: AppDataPtr,
+    siv: &mut cursive::Cursive,
+    resource_id: &str,
+    search_id: &str,
+) {
+    match on_query_helper(app_data_ptr, siv, resource_id, search_id) {
+        Ok(rows) => {
+            siv.pop_layer();
+            siv.add_layer(views::Dialog::text(format!("Got {} rows", rows.len())));
+        }
+        Err(err) => {
+            siv.add_layer(views::Dialog::around(build_query_error(&err)));
+        }
+    };
+}
+
+fn build_query_error(err: &anyhow::Error) -> impl cursive::view::View {
+    views::LinearLayout::vertical()
+        .child(views::TextView::new("Query Error"))
+        .child(views::TextView::new(err.to_string()))
+        .child(views::Button::new("OK", |s| {
+            s.pop_layer();
+        }))
 }
