@@ -2,9 +2,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::{collections::HashMap, fs};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
-use cursive::view::Nameable;
+use cursive::view::{Nameable, Resizable};
 use cursive::views;
 use serde::Deserialize;
 
@@ -316,12 +316,101 @@ fn on_query(
     match on_query_helper(app_data_ptr, siv, resource_id, search_id) {
         Ok(rows) => {
             siv.pop_layer();
-            siv.add_layer(views::Dialog::text(format!("Got {} rows", rows.len())));
+            siv.add_layer(views::Dialog::around(build_query_results(&rows)));
         }
         Err(err) => {
             siv.add_layer(views::Dialog::around(build_query_error(&err)));
         }
     };
+}
+
+struct SQLValueAsString(String);
+
+impl postgres::types::FromSql<'_> for SQLValueAsString {
+    fn from_sql(
+        ty: &postgres::types::Type,
+        raw: &'_ [u8],
+    ) -> std::result::Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        if ty == &postgres::types::Type::TEXT {
+            let val: String = String::from_sql(ty, raw)?;
+            Ok(SQLValueAsString(val))
+        } else if ty == &postgres::types::Type::INT4 {
+            let val: i32 = i32::from_sql(ty, raw)?;
+            Ok(SQLValueAsString(val.to_string()))
+        } else if ty == &postgres::types::Type::INT8 {
+            let val: i64 = i64::from_sql(ty, raw)?;
+            Ok(SQLValueAsString(val.to_string()))
+        } else {
+            Err(anyhow!("Unsupported type: {}", ty).into_boxed_dyn_error())
+        }
+    }
+
+    fn accepts(ty: &postgres::types::Type) -> bool {
+        ty == &postgres::types::Type::TEXT || ty == &postgres::types::Type::INT4
+    }
+}
+
+#[derive(Clone)]
+struct ResultRow(postgres::Row);
+
+impl cursive_table_view::TableViewItem<usize> for ResultRow {
+    fn to_column(&self, column: usize) -> String {
+        let val: SQLValueAsString = self
+            .0
+            .try_get(column)
+            .unwrap_or_else(|_| SQLValueAsString(String::from("<unsupported value>")));
+        val.0
+    }
+
+    fn cmp(&self, other: &Self, column: usize) -> std::cmp::Ordering
+    where
+        Self: Sized,
+    {
+        let self_val = self.to_column(column);
+        let other_val = other.to_column(column);
+        self_val.cmp(&other_val)
+    }
+}
+
+fn col_size<'a>(rows: &'a [postgres::Row], col: usize) -> usize {
+    if rows.is_empty() {
+        return 0;
+    }
+
+    let first = &rows[0];
+    let mut res = first.columns()[col].name().len();
+
+    for row in rows {
+        res = std::cmp::min(
+            32,
+            std::cmp::max(
+                res,
+                row.try_get::<'a, usize, SQLValueAsString>(col)
+                    .map(|v| v.0.len())
+                    .unwrap_or(0),
+            ),
+        );
+    }
+
+    res
+}
+
+fn build_query_results(rows: &[postgres::Row]) -> impl cursive::view::View {
+    let mut table = cursive_table_view::TableView::<ResultRow, usize>::new();
+
+    if !rows.is_empty() {
+        let first = &rows[0];
+
+        for (idx, col) in first.columns().iter().enumerate() {
+            table.add_column(idx, col.name(), |col| col.width(col_size(rows, idx)));
+        }
+
+        table.set_items(rows.iter().map(|r| ResultRow(r.clone())).collect());
+    }
+
+    views::LinearLayout::vertical()
+        .child(views::TextView::new("Query results"))
+        .child(table.full_screen())
 }
 
 fn build_query_error(err: &anyhow::Error) -> impl cursive::view::View {
