@@ -326,27 +326,56 @@ fn on_query(
 
 struct SQLValueAsString(String);
 
+impl<T: std::fmt::Display> From<T> for SQLValueAsString {
+    fn from(value: T) -> Self {
+        SQLValueAsString(value.to_string())
+    }
+}
+
 impl postgres::types::FromSql<'_> for SQLValueAsString {
     fn from_sql(
         ty: &postgres::types::Type,
         raw: &'_ [u8],
     ) -> std::result::Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        if ty == &postgres::types::Type::INT2 {
+            return Ok(SQLValueAsString::from(i16::from_sql(ty, raw)?));
+        }
+
+        if ty == &postgres::types::Type::INT4 {
+            return Ok(SQLValueAsString::from(i32::from_sql(ty, raw)?));
+        }
+
+        if ty == &postgres::types::Type::INT8 {
+            return Ok(SQLValueAsString::from(i64::from_sql(ty, raw)?));
+        }
+
         if ty == &postgres::types::Type::TEXT {
-            let val: String = String::from_sql(ty, raw)?;
-            Ok(SQLValueAsString(val))
-        } else if ty == &postgres::types::Type::INT4 {
-            let val: i32 = i32::from_sql(ty, raw)?;
-            Ok(SQLValueAsString(val.to_string()))
-        } else if ty == &postgres::types::Type::INT8 {
-            let val: i64 = i64::from_sql(ty, raw)?;
-            Ok(SQLValueAsString(val.to_string()))
-        } else {
-            Err(anyhow!("Unsupported type: {}", ty).into_boxed_dyn_error())
+            return Ok(SQLValueAsString::from(String::from_sql(ty, raw)?));
+        }
+
+        if ty == &postgres::types::Type::TIMESTAMPTZ {
+            return Ok(SQLValueAsString::from(jiff::Timestamp::from_sql(ty, raw)?));
+        }
+
+        Err(anyhow!("unsupported type: {}", ty).into_boxed_dyn_error())
+    }
+
+    fn from_sql_nullable(
+        ty: &postgres::types::Type,
+        raw: Option<&'_ [u8]>,
+    ) -> std::result::Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        match raw {
+            Some(val) => Self::from_sql(ty, val),
+            None => Ok(SQLValueAsString(String::from("<NULL>"))),
         }
     }
 
     fn accepts(ty: &postgres::types::Type) -> bool {
-        ty == &postgres::types::Type::TEXT || ty == &postgres::types::Type::INT4
+        ty == &postgres::types::Type::INT2
+            || ty == &postgres::types::Type::INT4
+            || ty == &postgres::types::Type::INT8
+            || ty == &postgres::types::Type::TEXT
+            || ty == &postgres::types::Type::TIMESTAMPTZ
     }
 }
 
@@ -358,7 +387,7 @@ impl cursive_table_view::TableViewItem<usize> for ResultRow {
         let val: SQLValueAsString = self
             .0
             .try_get(column)
-            .unwrap_or_else(|_| SQLValueAsString(String::from("<unsupported value>")));
+            .unwrap_or_else(|err| SQLValueAsString(err.to_string()));
         val.0
     }
 
@@ -406,11 +435,22 @@ fn build_query_results(rows: &[postgres::Row]) -> impl cursive::view::View {
         }
 
         table.set_items(rows.iter().map(|r| ResultRow(r.clone())).collect());
+        table.set_on_submit(|siv: &mut cursive::Cursive, _row: usize, index: usize| {
+            let row = siv
+                .call_on_name(
+                    "results",
+                    |table: &mut cursive_table_view::TableView<ResultRow, usize>| {
+                        table.borrow_item(index).unwrap().clone()
+                    },
+                )
+                .expect("missing results view");
+            siv.add_layer(views::Dialog::around(build_row_view(&row)));
+        });
     }
 
     views::LinearLayout::vertical()
         .child(views::TextView::new("Query results"))
-        .child(table.full_screen())
+        .child(table.with_name("results").full_screen())
 }
 
 fn build_query_error(err: &anyhow::Error) -> impl cursive::view::View {
@@ -418,6 +458,25 @@ fn build_query_error(err: &anyhow::Error) -> impl cursive::view::View {
         .child(views::TextView::new("Query Error"))
         .child(views::TextView::new(err.to_string()))
         .child(views::Button::new("OK", |s| {
+            s.pop_layer();
+        }))
+}
+
+fn build_row_view<'a>(row: &'a ResultRow) -> impl cursive::view::View {
+    let row = &row.0;
+    let mut values = views::LinearLayout::vertical();
+
+    for (idx, col) in row.columns().iter().enumerate() {
+        let view = match row.try_get::<'a, usize, SQLValueAsString>(idx) {
+            Ok(v) => cursive::views::TextView::new(&v.0),
+            Err(err) => cursive::views::TextView::new(err.to_string()),
+        };
+        values.add_child(views::Panel::new(view).title(col.name()));
+    }
+
+    views::LinearLayout::vertical()
+        .child(values)
+        .child(views::Button::new("Close", |s| {
             s.pop_layer();
         }))
 }
