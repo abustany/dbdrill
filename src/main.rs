@@ -576,11 +576,16 @@ fn on_show_links(
     resource_id: &str,
     row: &ResultRow,
 ) {
-    siv.add_layer(views::Dialog::around(build_link_picker(
-        Arc::clone(&app_data_ptr),
-        resource_id,
-        row,
-    )));
+    siv.add_layer(views::Dialog::around(
+        views::OnEventView::new(build_link_picker(
+            Arc::clone(&app_data_ptr),
+            resource_id,
+            row,
+        ))
+        .on_event(cursive::event::Key::Esc, |siv| {
+            siv.pop_layer();
+        }),
+    ));
 }
 
 fn build_link_picker(
