@@ -396,6 +396,7 @@ dependencies = [
  "jiff",
  "postgres",
  "serde",
+ "serde_json",
  "toml",
 ]
 
@@ -953,6 +954,8 @@ dependencies = [
  "fallible-iterator",
  "jiff",
  "postgres-protocol",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

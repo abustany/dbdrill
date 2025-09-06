@@ -386,6 +386,12 @@ impl postgres::types::FromSql<'_> for SQLValueAsString {
             return Ok(SQLValueAsString::from(i64::from_sql(ty, raw)?));
         }
 
+        if ty == &postgres::types::Type::JSONB {
+            return Ok(SQLValueAsString::from(serde_json::Value::from_sql(
+                ty, raw,
+            )?));
+        }
+
         if ty == &postgres::types::Type::TEXT {
             return Ok(SQLValueAsString::from(String::from_sql(ty, raw)?));
         }
@@ -411,6 +417,7 @@ impl postgres::types::FromSql<'_> for SQLValueAsString {
         ty == &postgres::types::Type::INT2
             || ty == &postgres::types::Type::INT4
             || ty == &postgres::types::Type::INT8
+            || ty == &postgres::types::Type::JSONB
             || ty == &postgres::types::Type::TEXT
             || ty == &postgres::types::Type::TIMESTAMPTZ
     }
