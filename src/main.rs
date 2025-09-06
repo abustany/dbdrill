@@ -628,7 +628,7 @@ fn on_pick_link_helper(
     resource_id: &str,
     link_name: &str,
     row: &ResultRow,
-) -> Result<Vec<postgres::Row>> {
+) -> Result<(String, Vec<postgres::Row>)> {
     let r = {
         let app_data = app_data_ptr.lock().unwrap();
         app_data
@@ -689,10 +689,12 @@ fn on_pick_link_helper(
 
     let mut app_data = app_data_ptr.lock().unwrap();
 
-    app_data
+    let rows = app_data
         .db
         .query(&link_search.query, &param_values_ref)
-        .context("error running SQL query")
+        .context("error running SQL query")?;
+
+    Ok((link.kind.clone(), rows))
 }
 
 fn on_pick_link(
@@ -703,11 +705,11 @@ fn on_pick_link(
     row: &ResultRow,
 ) {
     match on_pick_link_helper(Arc::clone(&app_data_ptr), resource_id, link_name, row) {
-        Ok(rows) => {
+        Ok((target_resource_id, rows)) => {
             siv.pop_layer();
             siv.add_layer(views::Dialog::around(build_query_results(
                 Arc::clone(&app_data_ptr),
-                resource_id,
+                &target_resource_id,
                 &rows,
             )));
         }
