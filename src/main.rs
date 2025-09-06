@@ -134,18 +134,22 @@ fn main() -> Result<()> {
     let db = postgres::Client::connect(&args.db_dsn, postgres::NoTls)
         .context("error connecting to DB")?;
 
-    let app_data = Arc::new(Mutex::new(AppData { resources, db }));
+    let app_data_ptr = Arc::new(Mutex::new(AppData { resources, db }));
 
     let mut siv = cursive::default();
     siv.add_global_callback('q', |s| s.quit());
 
-    siv.add_layer(views::Dialog::around(build_resource_picker(Arc::clone(
-        &app_data,
-    ))));
+    show_resource_picker_dialog(app_data_ptr, &mut siv);
 
     siv.run();
 
     Ok(())
+}
+
+fn show_resource_picker_dialog(app_data_ptr: AppDataPtr, siv: &mut cursive::Cursive) {
+    siv.add_layer(views::Dialog::around(build_resource_picker(Arc::clone(
+        &app_data_ptr,
+    ))));
 }
 
 fn build_resource_picker(app_data_ptr: AppDataPtr) -> impl cursive::view::View {
@@ -171,10 +175,21 @@ fn build_resource_picker(app_data_ptr: AppDataPtr) -> impl cursive::view::View {
 
 fn on_pick_resource(app_data_ptr: AppDataPtr, siv: &mut cursive::Cursive, resource_id: &str) {
     siv.pop_layer();
-    siv.add_layer(views::Dialog::around(build_search_picker(
-        app_data_ptr,
-        resource_id,
-    )));
+    show_search_picker_dialog(app_data_ptr, siv, resource_id);
+}
+
+fn show_search_picker_dialog(
+    app_data_ptr: AppDataPtr,
+    siv: &mut cursive::Cursive,
+    resource_id: &str,
+) {
+    siv.add_layer(views::Dialog::around(
+        views::OnEventView::new(build_search_picker(Arc::clone(&app_data_ptr), resource_id))
+            .on_event(cursive::event::Key::Esc, move |siv| {
+                siv.pop_layer();
+                show_resource_picker_dialog(Arc::clone(&app_data_ptr), siv);
+            }),
+    ));
 }
 
 fn build_search_picker(app_data_ptr: AppDataPtr, resource_id: &str) -> impl cursive::view::View {
@@ -216,11 +231,27 @@ fn on_pick_search(
     search_id: &str,
 ) {
     siv.pop_layer();
-    siv.add_layer(views::Dialog::around(build_query(
-        app_data_ptr,
-        resource_id,
-        search_id,
-    )));
+    show_query_dialog(app_data_ptr, siv, resource_id, search_id);
+}
+
+fn show_query_dialog(
+    app_data_ptr: AppDataPtr,
+    siv: &mut cursive::Cursive,
+    resource_id: &str,
+    search_id: &str,
+) {
+    let resource_id = resource_id.to_owned();
+    siv.add_layer(views::Dialog::around(
+        views::OnEventView::new(build_query(
+            Arc::clone(&app_data_ptr),
+            &resource_id,
+            search_id,
+        ))
+        .on_event(cursive::event::Key::Esc, move |siv| {
+            siv.pop_layer();
+            show_search_picker_dialog(Arc::clone(&app_data_ptr), siv, &resource_id);
+        }),
+    ));
 }
 
 fn build_query(
@@ -316,11 +347,13 @@ fn on_query(
     match on_query_helper(Arc::clone(&app_data_ptr), siv, resource_id, search_id) {
         Ok(rows) => {
             siv.pop_layer();
-            siv.add_layer(views::Dialog::around(build_query_results(
+            show_query_results_dialog(
                 Arc::clone(&app_data_ptr),
+                siv,
                 resource_id,
+                search_id,
                 &rows,
-            )));
+            );
         }
         Err(err) => {
             siv.add_layer(views::Dialog::around(build_query_error(&err)));
@@ -426,6 +459,28 @@ fn col_size<'a>(rows: &'a [postgres::Row], col: usize) -> usize {
     }
 
     res
+}
+
+fn show_query_results_dialog(
+    app_data_ptr: AppDataPtr,
+    siv: &mut cursive::Cursive,
+    resource_id: &str,
+    search_id: &str,
+    rows: &[postgres::Row],
+) {
+    let resource_id = resource_id.to_owned();
+    let search_id = search_id.to_owned();
+    siv.add_layer(views::Dialog::around(
+        views::OnEventView::new(build_query_results(
+            Arc::clone(&app_data_ptr),
+            &resource_id,
+            rows,
+        ))
+        .on_event(cursive::event::Key::Esc, move |siv| {
+            siv.pop_layer();
+            show_query_dialog(Arc::clone(&app_data_ptr), siv, &resource_id, &search_id);
+        }),
+    ));
 }
 
 fn build_query_results(
