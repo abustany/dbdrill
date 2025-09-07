@@ -383,6 +383,10 @@ impl postgres::types::FromSql<'_> for SQLValueAsString {
         ty: &postgres::types::Type,
         raw: &'_ [u8],
     ) -> std::result::Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        if ty == &postgres::types::Type::BOOL {
+            return Ok(SQLValueAsString::from(bool::from_sql(ty, raw)?));
+        }
+
         if ty == &postgres::types::Type::INT2 {
             return Ok(SQLValueAsString::from(i16::from_sql(ty, raw)?));
         }
@@ -423,7 +427,8 @@ impl postgres::types::FromSql<'_> for SQLValueAsString {
     }
 
     fn accepts(ty: &postgres::types::Type) -> bool {
-        ty == &postgres::types::Type::INT2
+        ty == &postgres::types::Type::BOOL
+            || ty == &postgres::types::Type::INT2
             || ty == &postgres::types::Type::INT4
             || ty == &postgres::types::Type::INT8
             || ty == &postgres::types::Type::JSONB
