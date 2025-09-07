@@ -86,6 +86,14 @@ fn validate_resource_link(resources: &HashMap<String, Resource>, link: &Link) ->
         );
     }
 
+    for (idx, p) in link.search_params.iter().enumerate() {
+        if let LinkSearchParam::JsonDeref { json_deref } = p {
+            if json_deref.is_empty() {
+                bail!("search param {idx} has an empty json_deref");
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -356,6 +364,7 @@ fn on_query(
             );
         }
         Err(err) => {
+            eprintln!("Error running query: {err:?}");
             siv.add_layer(views::Dialog::around(build_query_error(&err)));
         }
     };
@@ -678,11 +687,38 @@ fn on_pick_link_helper(
 
                 val
             }
-            LinkSearchParam::JsonDeref { json_deref } => todo!(),
+            LinkSearchParam::JsonDeref { json_deref } => {
+                let col_name = json_deref.first().expect("json_deref is empty");
+                let mut val: serde_json::Value = row
+                    .0
+                    .try_get(col_name.as_str())
+                    .context("error parsing value as JSON")?;
+                let mut consumed_fields: Vec<String> = Vec::new();
+
+                for field in json_deref.iter().skip(1) {
+                    val = val
+                        .as_object_mut()
+                        .with_context(|| {
+                            format!("value is not an object at .{}", consumed_fields.join("."))
+                        })?
+                        .get_mut(field)
+                        .with_context(|| {
+                            format!("field not found at .{}: {field}", consumed_fields.join("."))
+                        })?
+                        .take();
+                    consumed_fields.push(field.clone());
+                }
+
+                Box::new(
+                    val.as_str()
+                        .with_context(|| {
+                            format!("field is not a string at .{}", consumed_fields.join("."))
+                        })?
+                        .to_owned(),
+                )
+            }
         });
     }
-
-    eprintln!("{} {:?}", link_search.query, &param_values);
 
     let param_values_ref: Vec<&(dyn postgres::types::ToSql + Sync)> =
         param_values.iter().map(|v| v.as_ref()).collect();
@@ -707,6 +743,7 @@ fn on_pick_link(
     match on_pick_link_helper(Arc::clone(&app_data_ptr), resource_id, link_name, row) {
         Ok((target_resource_id, rows)) => {
             siv.pop_layer();
+            siv.pop_layer(); // pop both the link picker and the previous query results
             siv.add_layer(views::Dialog::around(build_query_results(
                 Arc::clone(&app_data_ptr),
                 &target_resource_id,
@@ -714,6 +751,7 @@ fn on_pick_link(
             )));
         }
         Err(err) => {
+            eprintln!("Error running link query: {err:?}");
             siv.add_layer(views::Dialog::around(build_query_error(&err)));
         }
     };
