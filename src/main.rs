@@ -409,6 +409,13 @@ impl postgres::types::FromSql<'_> for SQLValueAsString {
             return Ok(SQLValueAsString::from(String::from_sql(ty, raw)?));
         }
 
+        if ty == &postgres::types::Type::TEXT_ARRAY {
+            return Ok(SQLValueAsString(format!(
+                "{:?}",
+                Vec::<String>::from_sql(ty, raw)?
+            )));
+        }
+
         if ty == &postgres::types::Type::TIMESTAMPTZ {
             return Ok(SQLValueAsString::from(jiff::Timestamp::from_sql(ty, raw)?));
         }
@@ -433,6 +440,7 @@ impl postgres::types::FromSql<'_> for SQLValueAsString {
             || ty == &postgres::types::Type::INT8
             || ty == &postgres::types::Type::JSONB
             || ty == &postgres::types::Type::TEXT
+            || ty == &postgres::types::Type::TEXT_ARRAY
             || ty == &postgres::types::Type::TIMESTAMPTZ
     }
 }
