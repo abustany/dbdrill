@@ -41,8 +41,13 @@ fn main() -> Result<()> {
     model::validate_resources(&resources).context("error validating resources")?;
 
     println!("Connecting to the DB...");
-    let db = postgres::Client::connect(&args.db_dsn, postgres::NoTls)
-        .context("error connecting to DB")?;
+    let db_connector = native_tls::TlsConnector::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+        .context("error setting up TLS")?;
+    let db_connector = postgres_native_tls::MakeTlsConnector::new(db_connector);
+    let db =
+        postgres::Client::connect(&args.db_dsn, db_connector).context("error connecting to DB")?;
 
     tui::start(db, resources);
 
