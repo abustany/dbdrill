@@ -507,7 +507,7 @@ fn build_link_picker(
             .clone()
     };
 
-    for link in r.links.unwrap_or_default().keys() {
+    for link in r.links.keys() {
         select_view.add_item_str(link);
     }
 
@@ -540,7 +540,7 @@ fn on_pick_link_helper(
             .expect("invalid resource id")
             .clone()
     };
-    let links = r.links.unwrap_or_default();
+    let links = r.links;
     let link = links.get(link_name).expect("invalid link name");
     let link_target_resource = {
         let app_data = app_data_ptr.lock().unwrap();

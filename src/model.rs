@@ -39,8 +39,10 @@ pub struct Link {
 #[derive(Clone, Debug, Deserialize)]
 pub struct Resource {
     pub name: String,
+    #[serde(default)]
     pub search: HashMap<String, Search>,
-    pub links: Option<HashMap<String, Link>>,
+    #[serde(default)]
+    pub links: HashMap<String, Link>,
 }
 
 fn validate_resource_link(resources: &HashMap<String, Resource>, link: &Link) -> Result<()> {
@@ -103,10 +105,8 @@ pub fn validate_resources(resources: &HashMap<String, Resource>) -> Result<()> {
             bail!("resource {resource_id} has the same name as {other_resource_id}");
         }
 
-        if let Some(links) = &resource.links {
-            validate_resource_links(resources, links)
-                .with_context(|| format!("error validating {resource_id}.links"))?;
-        }
+        validate_resource_links(resources, &resource.links)
+            .with_context(|| format!("error validating {resource_id}.links"))?;
     }
     Ok(())
 }
