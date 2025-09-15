@@ -88,7 +88,21 @@ fn validate_resource_links(
 }
 
 pub fn validate_resources(resources: &HashMap<String, Resource>) -> Result<()> {
+    let mut used_names: HashMap<&str, &str> = HashMap::new();
+
     for (resource_id, resource) in resources {
+        if resource_id.is_empty() {
+            bail!("resource identifiers can't be empty");
+        }
+
+        if resource.name.is_empty() {
+            bail!("resource {resource_id} has an empty name");
+        }
+
+        if let Some(other_resource_id) = used_names.insert(&resource.name, resource_id) {
+            bail!("resource {resource_id} has the same name as {other_resource_id}");
+        }
+
         if let Some(links) = &resource.links {
             validate_resource_links(resources, links)
                 .with_context(|| format!("error validating {resource_id}.links"))?;
