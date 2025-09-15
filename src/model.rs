@@ -7,6 +7,8 @@ use serde::Deserialize;
 pub enum SearchParamType {
     #[serde(rename = "integer")]
     Integer,
+    #[serde(rename = "text[]")]
+    TextArray,
 }
 
 #[derive(Clone, Debug, Deserialize)]

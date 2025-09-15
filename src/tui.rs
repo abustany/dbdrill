@@ -289,6 +289,10 @@ fn on_query_helper(
                 })?;
                 Box::new(integer_val)
             }
+            Some(SearchParamType::TextArray) => {
+                let array_val: Vec<String> = str_val.split(',').map(|s| s.to_string()).collect();
+                Box::new(array_val)
+            }
         };
         param_values.push(val);
     }
@@ -558,7 +562,7 @@ fn on_pick_link_helper(
 
     let mut param_values: Vec<Box<dyn postgres::types::ToSql + Sync>> = Vec::new();
 
-    for param in &link.search_params {
+    for (param, target_param) in link.search_params.iter().zip(link_search.params.iter()) {
         param_values.push(match param {
             LinkSearchParam::Name(name) => {
                 let col = row
@@ -591,18 +595,29 @@ fn on_pick_link_helper(
                     .context("error parsing value as JSON")?;
                 let results = col_value.query(path).context("error dereferencing value")?;
 
-                if results.len() != 1 {
-                    bail!("dereferencing yielded more than a single value")
+                match target_param.ty {
+                    Some(SearchParamType::Integer) => Box::new(
+                        TryInto::<i32>::try_into(extract_single_value(&results)?
+                                                                .as_i64()
+                                                                .with_context(|| {
+                                                                    format!("dereferenced value {:?} is not a number", results[0])
+                                                                })?).with_context(|| format!("integer values overflows target type: {:?}", results[0]))?
+                                                        )  ,
+                    Some(SearchParamType::TextArray) => Box::new(
+                                            results.into_iter().map(|val| val.as_str().with_context(|| {
+                                                    format!("dereferenced value {val:?} is not a string", )
+                                                }).map(|x| x.to_owned())
+                                            ).collect::<Result<Vec<String>>>()?,
+                                                                            ),
+                    None /* text */ =>  Box::new(
+                        extract_single_value(&results)?
+                                            .as_str()
+                                            .with_context(|| {
+                                                format!("dereferenced value {:?} is not a string", results[0])
+                                            })?
+                                            .to_owned(),
+                                    ) ,
                 }
-
-                Box::new(
-                    results[0]
-                        .as_str()
-                        .with_context(|| {
-                            format!("dereferenced value {:?} is not a string", results[0])
-                        })?
-                        .to_owned(),
-                )
             }
         });
     }
@@ -642,6 +657,15 @@ fn on_pick_link(
             siv.add_layer(views::Dialog::around(build_query_error(&err)));
         }
     };
+}
+
+fn extract_single_value<'a>(vals: &[&'a serde_json::Value]) -> Result<&'a serde_json::Value> {
+    match vals {
+        [value] => Ok(value),
+        _ => {
+            bail!("expected 1 result, got {}", vals.len())
+        }
+    }
 }
 
 #[cfg(test)]
