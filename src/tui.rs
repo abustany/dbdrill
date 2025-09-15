@@ -334,22 +334,35 @@ fn on_query(
 #[derive(Clone)]
 struct ResultRow(postgres::Row);
 
-impl cursive_table_view::TableViewItem<usize> for ResultRow {
-    fn to_column(&self, column: usize) -> String {
-        let val: SQLValueAsString = self
-            .0
-            .try_get(column)
-            .unwrap_or_else(|err| SQLValueAsString::new(err.to_string()));
-        val.take_string()
+type IndexedRow = (usize, ResultRow);
+
+impl cursive_table_view::TableViewItem<TableColumn> for IndexedRow {
+    fn to_column(&self, column: TableColumn) -> String {
+        match column {
+            TableColumn::Idx => self.0.to_string(),
+            TableColumn::DBCol(column) => {
+                let val: SQLValueAsString = self
+                    .1
+                    .0
+                    .try_get(column)
+                    .unwrap_or_else(|err| SQLValueAsString::new(err.to_string()));
+                val.take_string()
+            }
+        }
     }
 
-    fn cmp(&self, other: &Self, column: usize) -> std::cmp::Ordering
+    fn cmp(&self, other: &Self, column: TableColumn) -> std::cmp::Ordering
     where
         Self: Sized,
     {
-        let self_val = self.to_column(column);
-        let other_val = other.to_column(column);
-        self_val.cmp(&other_val)
+        match column {
+            TableColumn::Idx => self.0.cmp(&other.0),
+            TableColumn::DBCol(_) => {
+                let self_val = self.to_column(column);
+                let other_val = other.to_column(column);
+                self_val.cmp(&other_val)
+            }
+        }
     }
 }
 
@@ -398,26 +411,43 @@ fn show_query_results_dialog(
     ));
 }
 
+#[derive(Clone, Copy, Hash, Eq, PartialEq)]
+enum TableColumn {
+    Idx,
+    DBCol(usize),
+}
+
 fn build_query_results(
     app_data_ptr: AppDataPtr,
     resource_id: &str,
     rows: &[postgres::Row],
 ) -> impl cursive::view::View {
-    let mut table = cursive_table_view::TableView::<ResultRow, usize>::new();
+    let mut table = cursive_table_view::TableView::<(usize, ResultRow), TableColumn>::new();
 
     if !rows.is_empty() {
         let first = &rows[0];
 
+        table.add_column(TableColumn::Idx, "#", |col| {
+            col.width((rows.len().ilog10() + 1) as usize)
+        });
+
         for (idx, col) in first.columns().iter().enumerate() {
-            table.add_column(idx, col.name(), |col| col.width(col_size(rows, idx)));
+            table.add_column(TableColumn::DBCol(idx), col.name(), |col| {
+                col.width(col_size(rows, idx))
+            });
         }
 
-        table.set_items(rows.iter().map(|r| ResultRow(r.clone())).collect());
+        table.set_items(
+            rows.iter()
+                .enumerate()
+                .map(|(idx, r)| (idx, ResultRow(r.clone())))
+                .collect(),
+        );
         table.set_on_submit(|siv: &mut cursive::Cursive, _row: usize, index: usize| {
-            let row = siv
+            let (_, row) = siv
                 .call_on_name(
                     "results",
-                    |table: &mut cursive_table_view::TableView<ResultRow, usize>| {
+                    |table: &mut cursive_table_view::TableView<IndexedRow, TableColumn>| {
                         table.borrow_item(index).unwrap().clone()
                     },
                 )
@@ -429,10 +459,10 @@ fn build_query_results(
     let table_with_events = {
         let resource_id = resource_id.to_owned();
         views::OnEventView::new(table.with_name("results")).on_event('l', move |siv| {
-            if let Some(row) = siv
+            if let Some((_, row)) = siv
                 .call_on_name(
                     "results",
-                    |table: &mut cursive_table_view::TableView<ResultRow, usize>| {
+                    |table: &mut cursive_table_view::TableView<IndexedRow, TableColumn>| {
                         table
                             .item()
                             .map(|idx| table.borrow_item(idx).unwrap().clone())
