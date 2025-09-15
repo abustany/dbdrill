@@ -9,6 +9,7 @@ clap = { version = "4.5.41", features = ["derive"] }
 cursive = "0.21.1"
 cursive_table_view = "0.15.0"
 jiff = "0.1.29"
+jsonpath-rust = "1.0.4"
 native-tls = "0.2.14"
 postgres = { version = "0.19.10", features = ["with-jiff-0_1", "with-serde_json-1"] }
 postgres-native-tls = "0.5.1"

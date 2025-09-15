@@ -26,7 +26,10 @@ pub struct Search {
 #[serde(untagged)]
 pub enum LinkSearchParam {
     Name(String),
-    JsonDeref { json_deref: Vec<String> },
+    JsonPath {
+        #[serde(rename = "json_path")]
+        col_and_path: (String, String),
+    },
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -68,10 +71,12 @@ fn validate_resource_link(resources: &HashMap<String, Resource>, link: &Link) ->
     }
 
     for (idx, p) in link.search_params.iter().enumerate() {
-        if let LinkSearchParam::JsonDeref { json_deref } = p {
-            if json_deref.is_empty() {
-                bail!("search param {idx} has an empty json_deref");
-            }
+        if let LinkSearchParam::JsonPath {
+            col_and_path: (_, path),
+        } = p
+        {
+            jsonpath_rust::parser::parse_json_path(path)
+                .with_context(|| format!("search param {idx} has an empty json_deref"))?;
         }
     }
 

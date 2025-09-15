@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use cursive::View;
 use cursive::view::{Nameable, Resizable};
 use cursive::views::{self};
+use jsonpath_rust::JsonPath;
 
 use crate::model::{LinkSearchParam, Resource, SearchParamType};
 use crate::sql_value_as_string::SQLValueAsString;
@@ -581,32 +582,24 @@ fn on_pick_link_helper(
 
                 val
             }
-            LinkSearchParam::JsonDeref { json_deref } => {
-                let col_name = json_deref.first().expect("json_deref is empty");
-                let mut val: serde_json::Value = row
+            LinkSearchParam::JsonPath {
+                col_and_path: (col_name, path),
+            } => {
+                let col_value: serde_json::Value = row
                     .0
                     .try_get(col_name.as_str())
                     .context("error parsing value as JSON")?;
-                let mut consumed_fields: Vec<String> = Vec::new();
+                let results = col_value.query(path).context("error dereferencing value")?;
 
-                for field in json_deref.iter().skip(1) {
-                    val = val
-                        .as_object_mut()
-                        .with_context(|| {
-                            format!("value is not an object at .{}", consumed_fields.join("."))
-                        })?
-                        .get_mut(field)
-                        .with_context(|| {
-                            format!("field not found at .{}: {field}", consumed_fields.join("."))
-                        })?
-                        .take();
-                    consumed_fields.push(field.clone());
+                if results.len() != 1 {
+                    bail!("dereferencing yielded more than a single value")
                 }
 
                 Box::new(
-                    val.as_str()
+                    results[0]
+                        .as_str()
                         .with_context(|| {
-                            format!("field is not a string at .{}", consumed_fields.join("."))
+                            format!("dereferenced value {:?} is not a string", results[0])
                         })?
                         .to_owned(),
                 )
