@@ -1,9 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
+use cursive::View;
 use cursive::view::{Nameable, Resizable};
-use cursive::views;
+use cursive::views::{self};
 
 use crate::model::{LinkSearchParam, Resource, SearchParamType};
 use crate::sql_value_as_string::SQLValueAsString;
@@ -30,16 +31,101 @@ fn show_resource_picker_dialog(app_data_ptr: AppDataPtr, siv: &mut cursive::Curs
     ))));
 }
 
+fn is_consonnant(c: char) -> bool {
+    !matches!(c, 'a' | 'e' | 'i' | 'o' | 'u')
+}
+
+fn assign_shortcuts<'a>(strs: impl IntoIterator<Item = &'a str>) -> Vec<Option<(usize, char)>> {
+    let mut assigned: HashSet<char> = HashSet::new();
+    let mut res: Vec<Option<(usize, char)>> = Vec::new();
+
+    'outer: for s in strs {
+        let mut is_prev_alphabetic = false;
+        let word_starts = s.chars().enumerate().filter(|(_, c)| {
+            let is_alphabetic = c.is_alphabetic();
+            let is_word_start = is_alphabetic && !is_prev_alphabetic;
+            is_prev_alphabetic = is_alphabetic;
+            is_word_start
+        });
+        let consonnants = s
+            .chars()
+            .enumerate()
+            .filter(|(_, c)| c.is_alphabetic() && is_consonnant(*c));
+        let all_alphas = s.chars().enumerate().filter(|(_, c)| c.is_alphabetic());
+
+        for (idx, c) in word_starts.chain(consonnants).chain(all_alphas) {
+            let c = c.to_lowercase().next().expect("error lowercasing");
+            if assigned.contains(&c) {
+                continue;
+            }
+
+            assigned.insert(c);
+            res.push(Some((idx, c)));
+            continue 'outer;
+        }
+
+        res.push(None);
+    }
+
+    res
+}
+
+fn build_shortcut_select_view<T: 'static + Send + Sync + Clone>(
+    mut v: views::SelectView<T>,
+    name: &str,
+) -> impl cursive::view::View {
+    let shortcuts = assign_shortcuts(v.iter().map(|(label, _)| label));
+
+    for ((label, _), shortcut) in v.iter_mut().zip(shortcuts.iter()) {
+        let Some((idx, _)) = shortcut else {
+            continue;
+        };
+        let txt = label.source().to_owned();
+        label.remove_spans(0..label.spans_raw().len());
+        label.append_plain(String::from_iter(txt.chars().take(*idx)));
+        label.append_styled(
+            String::from_iter(txt.chars().skip(*idx).take(1)),
+            Into::<cursive::style::Style>::into(cursive::style::Effect::Bold)
+                .combine(cursive::style::PaletteColor::Highlight),
+        );
+        label.append_plain(String::from_iter(txt.chars().skip(idx + 1)));
+    }
+
+    let mut res = views::OnEventView::new(v.with_name(name));
+
+    for (idx, shortcut) in shortcuts.iter().enumerate() {
+        let Some((_, c)) = shortcut else {
+            continue;
+        };
+        let name = name.to_owned();
+        res.set_on_event(cursive::event::Event::Char(*c), move |s| {
+            if let Some(Some(cb)) = s.call_on_name(&name, |v: &mut views::SelectView| {
+                v.set_selection(idx);
+                if let cursive::event::EventResult::Consumed(Some(cb)) =
+                    v.on_event(cursive::event::Event::Key(cursive::event::Key::Enter))
+                {
+                    Some(cb.clone())
+                } else {
+                    None
+                }
+            }) {
+                cb(s);
+            }
+        });
+    }
+
+    res
+}
+
 fn build_resource_picker(app_data_ptr: AppDataPtr) -> impl cursive::view::View {
     let mut select_view = views::SelectView::new();
-
     {
         let app_data = app_data_ptr.lock().unwrap();
 
         for (k, v) in &app_data.resources {
-            select_view.add_item(&v.name, k.to_owned());
+            select_view.add_item(v.name.as_str(), k.to_owned());
         }
-    }
+    };
 
     select_view.sort_by_label();
     select_view.set_on_submit(move |s, resource_id| {
@@ -48,7 +134,7 @@ fn build_resource_picker(app_data_ptr: AppDataPtr) -> impl cursive::view::View {
 
     views::LinearLayout::vertical()
         .child(views::TextView::new("Resources"))
-        .child(select_view)
+        .child(build_shortcut_select_view(select_view, "resource_picker"))
 }
 
 fn on_pick_resource(app_data_ptr: AppDataPtr, siv: &mut cursive::Cursive, resource_id: &str) {
@@ -99,7 +185,7 @@ fn build_search_picker(app_data_ptr: AppDataPtr, resource_id: &str) -> impl curs
 
     views::LinearLayout::vertical()
         .child(views::TextView::new(&title))
-        .child(select_view)
+        .child(build_shortcut_select_view(select_view, "search_picker"))
 }
 
 fn on_pick_search(
@@ -563,4 +649,34 @@ fn on_pick_link(
             siv.add_layer(views::Dialog::around(build_query_error(&err)));
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_assign_shortcuts() {
+        let items: Vec<&str> = vec![
+            "Case",
+            "Case list",
+            "Case list item",
+            "Presentation",
+            "Slide",
+            "Space",
+            "User",
+        ];
+        assert_eq!(
+            assign_shortcuts(items),
+            vec![
+                Some((0, 'c')),
+                Some((5, 'l')),
+                Some((10, 'i')),
+                Some((0, 'p')),
+                Some((0, 's')),
+                Some((2, 'a')),
+                Some((0, 'u')),
+            ]
+        );
+    }
 }
