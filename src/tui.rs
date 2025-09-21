@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, bail};
@@ -260,7 +261,7 @@ fn on_query_helper(
     siv: &mut cursive::Cursive,
     resource_id: &str,
     search_id: &str,
-) -> Result<Vec<postgres::Row>> {
+) -> Result<(String, Vec<postgres::Row>)> {
     let r = {
         let app_data = app_data_ptr.lock().unwrap();
         app_data
@@ -270,14 +271,24 @@ fn on_query_helper(
             .clone()
     };
     let s = r.search.get(search_id).expect("invalid search id");
+    let mut title = String::new();
     let mut param_values: Vec<Box<dyn postgres::types::ToSql + Sync>> = Vec::new();
 
-    for param in &s.params {
+    write!(&mut title, "{} / {} (", &r.name, search_id)?;
+
+    for (idx, param) in s.params.iter().enumerate() {
         let str_val: String = siv
             .call_on_name(&param.name, |view: &mut views::EditView| view.get_content())
             .expect("missing param view")
             .as_ref()
             .clone();
+
+        if idx > 0 {
+            write!(&mut title, ", ")?;
+        }
+
+        write!(&mut title, "{}={}", &param.name, &str_val)?;
+
         let val: Box<dyn postgres::types::ToSql + Sync> = match param.ty {
             None => Box::new(str_val),
             Some(SearchParamType::Integer) => {
@@ -297,14 +308,18 @@ fn on_query_helper(
         param_values.push(val);
     }
 
+    write!(&mut title, ")")?;
+
     let param_values_ref: Vec<&(dyn postgres::types::ToSql + Sync)> =
         param_values.iter().map(|v| v.as_ref()).collect();
 
     let mut app_data = app_data_ptr.lock().unwrap();
-    app_data
+    let rows = app_data
         .db
         .query(&s.query, &param_values_ref)
-        .context("error running SQL query")
+        .context("error running SQL query")?;
+
+    Ok((title, rows))
 }
 
 fn on_query(
@@ -314,13 +329,14 @@ fn on_query(
     search_id: &str,
 ) {
     match on_query_helper(Arc::clone(&app_data_ptr), siv, resource_id, search_id) {
-        Ok(rows) => {
+        Ok((title, rows)) => {
             siv.pop_layer();
             show_query_results_dialog(
                 Arc::clone(&app_data_ptr),
                 siv,
                 resource_id,
                 search_id,
+                &title,
                 &rows,
             );
         }
@@ -392,6 +408,7 @@ fn show_query_results_dialog(
     siv: &mut cursive::Cursive,
     resource_id: &str,
     search_id: &str,
+    title: &str,
     rows: &[postgres::Row],
 ) {
     let resource_id = resource_id.to_owned();
@@ -400,6 +417,7 @@ fn show_query_results_dialog(
         views::OnEventView::new(build_query_results(
             Arc::clone(&app_data_ptr),
             &resource_id,
+            title,
             rows,
         ))
         .on_event(cursive::event::Key::Esc, move |siv| {
@@ -418,6 +436,7 @@ enum TableColumn {
 fn build_query_results(
     app_data_ptr: AppDataPtr,
     resource_id: &str,
+    title: &str,
     rows: &[postgres::Row],
 ) -> impl cursive::view::View {
     let mut table = cursive_table_view::TableView::<(usize, ResultRow), TableColumn>::new();
@@ -474,7 +493,7 @@ fn build_query_results(
     };
 
     views::LinearLayout::vertical()
-        .child(views::TextView::new("Query results"))
+        .child(views::TextView::new(format!("Query results: {title}")))
         .child(table_with_events.full_screen())
 }
 
@@ -564,7 +583,7 @@ fn on_pick_link_helper(
     resource_id: &str,
     link_name: &str,
     row: &ResultRow,
-) -> Result<(String, Vec<postgres::Row>)> {
+) -> Result<(String, String, Vec<postgres::Row>)> {
     let r = {
         let app_data = app_data_ptr.lock().unwrap();
         app_data
@@ -588,10 +607,18 @@ fn on_pick_link_helper(
         .get(&link.search)
         .expect("invalid link search name");
 
+    let mut title = String::new();
     let mut param_values: Vec<Box<dyn postgres::types::ToSql + Sync>> = Vec::new();
 
-    for (param, target_param) in link.search_params.iter().zip(link_search.params.iter()) {
-        param_values.push(match param {
+    write!(&mut title, "{} (", &r.name)?;
+
+    for (idx, (param, target_param)) in link
+        .search_params
+        .iter()
+        .zip(link_search.params.iter())
+        .enumerate()
+    {
+        let (param_value, title_item) = match param {
             LinkSearchParam::Name(name) => {
                 let col = row
                     .0
@@ -600,6 +627,11 @@ fn on_pick_link_helper(
                     .find(|col| col.name() == name)
                     .expect("invalid column name");
                 let col_ty = col.type_();
+
+                let val_title: SQLValueAsString = row
+                    .0
+                    .try_get(name.as_str())
+                    .unwrap_or_else(|err| SQLValueAsString::new(err.to_string()));
 
                 let val: Box<dyn postgres::types::ToSql + Sync> =
                     if col_ty == &postgres::types::Type::TEXT {
@@ -612,18 +644,22 @@ fn on_pick_link_helper(
                         todo!();
                     };
 
-                val
+                (val, val_title.take_string())
             }
             LinkSearchParam::JsonPath {
                 col_and_path: (col_name, path),
             } => {
+                let col_value_title: SQLValueAsString = row
+                    .0
+                    .try_get(col_name.as_str())
+                    .unwrap_or_else(|err| SQLValueAsString::new(err.to_string()));
                 let col_value: serde_json::Value = row
                     .0
                     .try_get(col_name.as_str())
                     .context("error parsing value as JSON")?;
                 let results = col_value.query(path).context("error dereferencing value")?;
 
-                match target_param.ty {
+                let val: Box<dyn postgres::types::ToSql + Sync> = match target_param.ty {
                     Some(SearchParamType::Integer) => Box::new(
                         TryInto::<i32>::try_into(extract_single_value(&results)?
                                                                 .as_i64()
@@ -645,10 +681,22 @@ fn on_pick_link_helper(
                                             })?
                                             .to_owned(),
                                     ) ,
-                }
+                };
+
+                (val, format!("{path}={}", col_value_title.take_string()))
             }
-        });
+        };
+
+        if idx > 0 {
+            write!(&mut title, ", ")?;
+        }
+
+        write!(&mut title, "{title_item}")?;
+
+        param_values.push(param_value);
     }
+
+    write!(&mut title, ") → {link_name}")?;
 
     let param_values_ref: Vec<&(dyn postgres::types::ToSql + Sync)> =
         param_values.iter().map(|v| v.as_ref()).collect();
@@ -660,7 +708,7 @@ fn on_pick_link_helper(
         .query(&link_search.query, &param_values_ref)
         .context("error running SQL query")?;
 
-    Ok((link.kind.clone(), rows))
+    Ok((link.kind.clone(), title, rows))
 }
 
 fn on_pick_link(
@@ -671,12 +719,13 @@ fn on_pick_link(
     row: &ResultRow,
 ) {
     match on_pick_link_helper(Arc::clone(&app_data_ptr), resource_id, link_name, row) {
-        Ok((target_resource_id, rows)) => {
+        Ok((target_resource_id, title, rows)) => {
             siv.pop_layer();
             siv.pop_layer(); // pop both the link picker and the previous query results
             siv.add_layer(views::Dialog::around(build_query_results(
                 Arc::clone(&app_data_ptr),
                 &target_resource_id,
+                &title,
                 &rows,
             )));
         }
