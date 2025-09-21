@@ -367,26 +367,24 @@ impl cursive_table_view::TableViewItem<TableColumn> for IndexedRow {
 }
 
 fn col_size<'a>(rows: &'a [postgres::Row], col: usize) -> usize {
-    if rows.is_empty() {
-        return 0;
-    }
+    let name_size = rows
+        .first()
+        .map(|row| row.columns()[col].name().len())
+        .unwrap_or(0);
+    let max_col_size = rows
+        .iter()
+        .map(|row| {
+            row.try_get::<'a, usize, SQLValueAsString>(col)
+                .map(|v| v.take_string().len())
+                .unwrap_or(0)
+        })
+        .max()
+        .unwrap_or(0);
 
-    let first = &rows[0];
-    let mut res = first.columns()[col].name().len();
-
-    for row in rows {
-        res = std::cmp::min(
-            32,
-            std::cmp::max(
-                res,
-                row.try_get::<'a, usize, SQLValueAsString>(col)
-                    .map(|v| v.take_string().len())
-                    .unwrap_or(0),
-            ),
-        );
-    }
-
-    res
+    std::cmp::min(
+        32, // clip to 32 chars
+        std::cmp::max(name_size, max_col_size),
+    )
 }
 
 fn show_query_results_dialog(
