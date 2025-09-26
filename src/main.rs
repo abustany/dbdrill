@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::{collections::HashMap, fs};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
 
 mod model;
@@ -18,9 +18,11 @@ mod tui;
 struct Args {
     /// PostgreSQL database connection string (DSN)
     #[arg(
+        long,
+        env = "DB_DSN",
         help = "PostgreSQL database connection string (e.g., postgres://user:password@host:port/database)"
     )]
-    db_dsn: String,
+    db_dsn: Option<String>,
 
     /// Path to the TOML resources file
     #[arg(help = "Path to the TOML file containing resources configuration")]
@@ -30,7 +32,13 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    println!("Database DSN: {}", args.db_dsn);
+    let Some(db_dsn) = args.db_dsn else {
+        bail!(
+            "No DB DSN provided. Use either --db-dn or the DB_DSN environment variable to provide it."
+        );
+    };
+
+    println!("Database DSN: {db_dsn}");
     println!("Resources file: {}", args.resources_file.display());
 
     let resources: HashMap<String, Resource> = toml::from_str(
@@ -46,8 +54,7 @@ fn main() -> Result<()> {
         .build()
         .context("error setting up TLS")?;
     let db_connector = postgres_native_tls::MakeTlsConnector::new(db_connector);
-    let db =
-        postgres::Client::connect(&args.db_dsn, db_connector).context("error connecting to DB")?;
+    let db = postgres::Client::connect(&db_dsn, db_connector).context("error connecting to DB")?;
 
     tui::start(db, resources);
 
