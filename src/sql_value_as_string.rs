@@ -64,7 +64,7 @@ impl postgres::types::FromSql<'_> for SQLValueAsString {
             return Ok(SQLValueAsString::from(jiff::Timestamp::from_sql(ty, raw)?));
         }
 
-        Err(anyhow!("unsupported type: {}", ty).into_boxed_dyn_error())
+        Err(anyhow!("unsupported type: {ty}").into_boxed_dyn_error())
     }
 
     fn from_sql_nullable(
