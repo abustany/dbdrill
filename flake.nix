@@ -24,19 +24,29 @@
         rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
         craneLib = (crane.mkLib pkgs).overrideToolchain rust;
 
+        src = craneLib.cleanCargoSource ./.;
+
         craneCommonArgs = {
-          src = craneLib.cleanCargoSource ./.;
+          inherit src;
           strictDeps = true;
           buildInputs = [] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [];
         };
 
+        cargoArtifacts = craneLib.buildDepsOnly craneCommonArgs;
+
         dbdrill = craneLib.buildPackage(
-          craneCommonArgs // { cargoArtifacts = craneLib.buildDepsOnly craneCommonArgs; }
+          craneCommonArgs // { inherit cargoArtifacts; }
         );
       in
       with pkgs;
       {
-        checks = { inherit dbdrill; };
+        checks = {
+          # Make sure it compiles
+          inherit dbdrill;
+
+          dbdrill-clippy = craneLib.cargoClippy ( craneCommonArgs // { inherit cargoArtifacts; } );
+          dbdrill-fmt = craneLib.cargoFmt { inherit src; };
+        };
         packages.default = dbdrill;
         apps.default = flake-utils.lib.mkApp { drv = dbdrill; };
         devShells.default = mkShell {
