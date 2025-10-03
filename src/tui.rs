@@ -23,14 +23,10 @@ pub fn start(db: postgres::Client, resources: HashMap<String, Resource>) {
     siv.add_global_callback('q', |s| s.quit());
 
     let app_data_ptr = Arc::new(Mutex::new(AppData { resources, db }));
-    show_resource_picker_dialog(app_data_ptr, &mut siv);
+    let router = Router::new(Arc::clone(&app_data_ptr));
+    router.push(&mut siv, Box::new(RouteResourcePicker {}));
+    // show_resource_picker_dialog(app_data_ptr, &mut siv);
     siv.run();
-}
-
-fn show_resource_picker_dialog(app_data_ptr: AppDataPtr, siv: &mut cursive::Cursive) {
-    siv.add_layer(views::Dialog::around(build_resource_picker(Arc::clone(
-        &app_data_ptr,
-    ))));
 }
 
 fn is_consonnant(c: char) -> bool {
@@ -119,7 +115,80 @@ fn build_shortcut_select_view<T: 'static + Send + Sync + Clone>(
     res
 }
 
-fn build_resource_picker(app_data_ptr: AppDataPtr) -> impl cursive::view::View {
+trait Route {
+    fn mount(&self, app_data_ptr: AppDataPtr, siv: &mut cursive::Cursive, router: &Router);
+    fn unmount(&self, app_data_ptr: AppDataPtr, siv: &mut cursive::Cursive, router: &Router);
+}
+
+struct RouterContextData {
+    history: Vec<Box<dyn Route + Send>>,
+}
+
+struct Router {
+    app_data_ptr: AppDataPtr,
+    data: Arc<Mutex<RouterContextData>>,
+}
+
+impl Router {
+    fn new(app_data_ptr: AppDataPtr) -> Self {
+        Router {
+            app_data_ptr,
+            data: Arc::new(Mutex::new(RouterContextData {
+                history: Vec::new(),
+            })),
+        }
+    }
+
+    fn push(&self, siv: &mut cursive::Cursive, route: Box<dyn Route + Send>) {
+        let mut ctx = self.data.lock().unwrap();
+        if let Some(mounted_route) = ctx.history.last() {
+            mounted_route.unmount(Arc::clone(&self.app_data_ptr), siv, &self.clone());
+        }
+        route.mount(Arc::clone(&self.app_data_ptr), siv, &self.clone());
+        ctx.history.push(route);
+    }
+
+    fn pop(&self, siv: &mut cursive::Cursive) {
+        let mut ctx = self.data.lock().unwrap();
+        if let Some(route) = ctx.history.pop() {
+            route.unmount(Arc::clone(&self.app_data_ptr), siv, &self.clone());
+        }
+        if let Some(route) = ctx.history.last() {
+            route.mount(Arc::clone(&self.app_data_ptr), siv, &self.clone());
+        } else {
+            siv.quit();
+        }
+    }
+}
+
+impl Clone for Router {
+    fn clone(&self) -> Self {
+        Self {
+            app_data_ptr: Arc::clone(&self.app_data_ptr),
+            data: Arc::clone(&self.data),
+        }
+    }
+}
+
+struct RouteResourcePicker {}
+
+impl Route for RouteResourcePicker {
+    fn mount(&self, app_data_ptr: AppDataPtr, siv: &mut cursive::Cursive, router: &Router) {
+        let router = router.clone();
+        siv.add_layer(views::Dialog::around(
+            views::OnEventView::new(build_resource_picker(Arc::clone(&app_data_ptr), &router))
+                .on_event(cursive::event::Key::Esc, move |siv| {
+                    router.pop(siv);
+                }),
+        ));
+    }
+
+    fn unmount(&self, _app_data_ptr: AppDataPtr, siv: &mut cursive::Cursive, _router: &Router) {
+        siv.pop_layer();
+    }
+}
+
+fn build_resource_picker(app_data_ptr: AppDataPtr, router: &Router) -> impl cursive::view::View {
     let mut select_view = views::SelectView::new();
     {
         let app_data = app_data_ptr.lock().unwrap();
@@ -130,8 +199,14 @@ fn build_resource_picker(app_data_ptr: AppDataPtr) -> impl cursive::view::View {
     };
 
     select_view.sort_by_label();
-    select_view.set_on_submit(move |s, resource_id| {
-        on_pick_resource(Arc::clone(&app_data_ptr), s, resource_id)
+    let router = router.clone();
+    select_view.set_on_submit(move |siv, resource_id: &str| {
+        router.push(
+            siv,
+            Box::new(SearchPickerRoute {
+                resource_id: resource_id.to_owned(),
+            }),
+        )
     });
 
     views::LinearLayout::vertical()
@@ -139,26 +214,35 @@ fn build_resource_picker(app_data_ptr: AppDataPtr) -> impl cursive::view::View {
         .child(build_shortcut_select_view(select_view, "resource_picker"))
 }
 
-fn on_pick_resource(app_data_ptr: AppDataPtr, siv: &mut cursive::Cursive, resource_id: &str) {
-    siv.pop_layer();
-    show_search_picker_dialog(app_data_ptr, siv, resource_id);
+struct SearchPickerRoute {
+    resource_id: String,
 }
 
-fn show_search_picker_dialog(
-    app_data_ptr: AppDataPtr,
-    siv: &mut cursive::Cursive,
-    resource_id: &str,
-) {
-    siv.add_layer(views::Dialog::around(
-        views::OnEventView::new(build_search_picker(Arc::clone(&app_data_ptr), resource_id))
+impl Route for SearchPickerRoute {
+    fn mount(&self, app_data_ptr: AppDataPtr, siv: &mut cursive::Cursive, router: &Router) {
+        let router = router.clone();
+        siv.add_layer(views::Dialog::around(
+            views::OnEventView::new(build_search_picker(
+                Arc::clone(&app_data_ptr),
+                &router,
+                &self.resource_id,
+            ))
             .on_event(cursive::event::Key::Esc, move |siv| {
-                siv.pop_layer();
-                show_resource_picker_dialog(Arc::clone(&app_data_ptr), siv);
+                router.pop(siv);
             }),
-    ));
+        ));
+    }
+
+    fn unmount(&self, _app_data_ptr: AppDataPtr, siv: &mut cursive::Cursive, _router: &Router) {
+        siv.pop_layer();
+    }
 }
 
-fn build_search_picker(app_data_ptr: AppDataPtr, resource_id: &str) -> impl cursive::view::View {
+fn build_search_picker(
+    app_data_ptr: AppDataPtr,
+    router: &Router,
+    resource_id: &str,
+) -> impl cursive::view::View {
     let mut select_view = views::SelectView::new();
 
     let r = {
@@ -178,8 +262,15 @@ fn build_search_picker(app_data_ptr: AppDataPtr, resource_id: &str) -> impl curs
 
     {
         let resource_id = resource_id.to_owned();
-        select_view.set_on_submit(move |s, search| {
-            on_pick_search(Arc::clone(&app_data_ptr), s, &resource_id, search)
+        let router = router.clone();
+        select_view.set_on_submit(move |siv, search_id: &str| {
+            router.push(
+                siv,
+                Box::new(QueryRoute {
+                    resource_id: resource_id.clone(),
+                    search_id: search_id.to_owned(),
+                }),
+            );
         });
     }
 
@@ -190,38 +281,35 @@ fn build_search_picker(app_data_ptr: AppDataPtr, resource_id: &str) -> impl curs
         .child(build_shortcut_select_view(select_view, "search_picker"))
 }
 
-fn on_pick_search(
-    app_data_ptr: AppDataPtr,
-    siv: &mut cursive::Cursive,
-    resource_id: &str,
-    search_id: &str,
-) {
-    siv.pop_layer();
-    show_query_dialog(app_data_ptr, siv, resource_id, search_id);
+struct QueryRoute {
+    resource_id: String,
+    search_id: String,
 }
 
-fn show_query_dialog(
-    app_data_ptr: AppDataPtr,
-    siv: &mut cursive::Cursive,
-    resource_id: &str,
-    search_id: &str,
-) {
-    let resource_id = resource_id.to_owned();
-    siv.add_layer(views::Dialog::around(
-        views::OnEventView::new(build_query(
-            Arc::clone(&app_data_ptr),
-            &resource_id,
-            search_id,
-        ))
-        .on_event(cursive::event::Key::Esc, move |siv| {
-            siv.pop_layer();
-            show_search_picker_dialog(Arc::clone(&app_data_ptr), siv, &resource_id);
-        }),
-    ));
+impl Route for QueryRoute {
+    fn mount(&self, app_data_ptr: AppDataPtr, siv: &mut cursive::Cursive, router: &Router) {
+        let router = router.clone();
+        siv.add_layer(views::Dialog::around(
+            views::OnEventView::new(build_query(
+                Arc::clone(&app_data_ptr),
+                &router,
+                &self.resource_id,
+                &self.search_id,
+            ))
+            .on_event(cursive::event::Key::Esc, move |siv| {
+                router.pop(siv);
+            }),
+        ));
+    }
+
+    fn unmount(&self, _app_data_ptr: AppDataPtr, siv: &mut cursive::Cursive, _router: &Router) {
+        siv.pop_layer();
+    }
 }
 
 fn build_query(
     app_data_ptr: AppDataPtr,
+    router: &Router,
     resource_id: &str,
     search_id: &str,
 ) -> impl cursive::view::View {
@@ -247,20 +335,39 @@ fn build_query(
     {
         let resource_id = resource_id.to_owned();
         let search_id = search_id.to_owned();
+        let router = router.clone();
 
         layout.add_child(views::Button::new("Search", move |s| {
-            on_query(Arc::clone(&app_data_ptr), s, &resource_id, &search_id)
+            on_query(
+                Arc::clone(&app_data_ptr),
+                s,
+                &router,
+                &resource_id,
+                &search_id,
+            )
         }));
     }
 
     layout
 }
 
+fn gather_query_parameter_strings(siv: &mut cursive::Cursive, param_names: &[&str]) -> Vec<String> {
+    param_names
+        .iter()
+        .map(|name| {
+            siv.call_on_name(name, |view: &mut views::EditView| view.get_content())
+                .expect("missing param view")
+                .as_ref()
+                .clone()
+        })
+        .collect()
+}
+
 fn on_query_helper(
     app_data_ptr: AppDataPtr,
-    siv: &mut cursive::Cursive,
     resource_id: &str,
     search_id: &str,
+    params_str_values: &[String],
 ) -> Result<(String, Vec<postgres::Row>)> {
     let r = {
         let app_data = app_data_ptr.lock().unwrap();
@@ -276,13 +383,7 @@ fn on_query_helper(
 
     write!(&mut title, "{} / {} (", &r.name, search_id)?;
 
-    for (idx, param) in s.params.iter().enumerate() {
-        let str_val: String = siv
-            .call_on_name(&param.name, |view: &mut views::EditView| view.get_content())
-            .expect("missing param view")
-            .as_ref()
-            .clone();
-
+    for (idx, (param, str_val)) in s.params.iter().zip(params_str_values.iter()).enumerate() {
         if idx > 0 {
             write!(&mut title, ", ")?;
         }
@@ -325,19 +426,35 @@ fn on_query_helper(
 fn on_query(
     app_data_ptr: AppDataPtr,
     siv: &mut cursive::Cursive,
+    router: &Router,
     resource_id: &str,
     search_id: &str,
 ) {
-    match on_query_helper(Arc::clone(&app_data_ptr), siv, resource_id, search_id) {
+    let r = {
+        let app_data = app_data_ptr.lock().unwrap();
+        app_data
+            .resources
+            .get(resource_id)
+            .expect("invalid resource id")
+            .clone()
+    };
+    let s = r.search.get(search_id).expect("invalid search id");
+    let param_names: Vec<&str> = s.params.iter().map(|p| p.name.as_str()).collect();
+
+    match on_query_helper(
+        Arc::clone(&app_data_ptr),
+        resource_id,
+        search_id,
+        gather_query_parameter_strings(siv, param_names.as_slice()).as_slice(),
+    ) {
         Ok((title, rows)) => {
-            siv.pop_layer();
-            show_query_results_dialog(
-                Arc::clone(&app_data_ptr),
+            router.push(
                 siv,
-                resource_id,
-                search_id,
-                &title,
-                &rows,
+                Box::new(QueryResultsRoute {
+                    resource_id: resource_id.to_owned(),
+                    title,
+                    rows,
+                }),
             );
         }
         Err(err) => {
@@ -403,28 +520,32 @@ fn col_size<'a>(rows: &'a [postgres::Row], col: usize) -> usize {
     )
 }
 
-fn show_query_results_dialog(
-    app_data_ptr: AppDataPtr,
-    siv: &mut cursive::Cursive,
-    resource_id: &str,
-    search_id: &str,
-    title: &str,
-    rows: &[postgres::Row],
-) {
-    let resource_id = resource_id.to_owned();
-    let search_id = search_id.to_owned();
-    siv.add_layer(views::Dialog::around(
-        views::OnEventView::new(build_query_results(
-            Arc::clone(&app_data_ptr),
-            &resource_id,
-            title,
-            rows,
-        ))
-        .on_event(cursive::event::Key::Esc, move |siv| {
-            siv.pop_layer();
-            show_query_dialog(Arc::clone(&app_data_ptr), siv, &resource_id, &search_id);
-        }),
-    ));
+struct QueryResultsRoute {
+    resource_id: String,
+    title: String,
+    rows: Vec<postgres::Row>,
+}
+
+impl Route for QueryResultsRoute {
+    fn mount(&self, app_data_ptr: AppDataPtr, siv: &mut cursive::Cursive, router: &Router) {
+        let router = router.clone();
+        siv.add_layer(views::Dialog::around(
+            views::OnEventView::new(build_query_results(
+                Arc::clone(&app_data_ptr),
+                &router,
+                &self.resource_id,
+                &self.title,
+                &self.rows,
+            ))
+            .on_event(cursive::event::Key::Esc, move |siv| {
+                router.pop(siv);
+            }),
+        ));
+    }
+
+    fn unmount(&self, _app_data_ptr: AppDataPtr, siv: &mut cursive::Cursive, _router: &Router) {
+        siv.pop_layer();
+    }
 }
 
 #[derive(Clone, Copy, Hash, Eq, PartialEq)]
@@ -435,6 +556,7 @@ enum TableColumn {
 
 fn build_query_results(
     app_data_ptr: AppDataPtr,
+    router: &Router,
     resource_id: &str,
     title: &str,
     rows: &[postgres::Row],
@@ -475,6 +597,7 @@ fn build_query_results(
 
     let table_with_events = {
         let resource_id = resource_id.to_owned();
+        let router = router.clone();
         views::OnEventView::new(table.with_name("results")).on_event('l', move |siv| {
             if let Some((_, row)) = siv
                 .call_on_name(
@@ -487,7 +610,7 @@ fn build_query_results(
                 )
                 .expect("missing results view")
             {
-                on_show_links(Arc::clone(&app_data_ptr), siv, &resource_id, &row);
+                on_show_links(Arc::clone(&app_data_ptr), siv, &router, &resource_id, &row);
             }
         })
     };
@@ -528,12 +651,14 @@ fn build_row_view<'a>(row: &'a ResultRow) -> impl cursive::view::View {
 fn on_show_links(
     app_data_ptr: AppDataPtr,
     siv: &mut cursive::Cursive,
+    router: &Router,
     resource_id: &str,
     row: &ResultRow,
 ) {
     siv.add_layer(views::Dialog::around(
         views::OnEventView::new(build_link_picker(
             Arc::clone(&app_data_ptr),
+            router,
             resource_id,
             row,
         ))
@@ -545,6 +670,7 @@ fn on_show_links(
 
 fn build_link_picker(
     app_data_ptr: AppDataPtr,
+    router: &Router,
     resource_id: &str,
     row: &ResultRow,
 ) -> impl cursive::view::View {
@@ -568,8 +694,16 @@ fn build_link_picker(
     {
         let resource_id = resource_id.to_owned();
         let row = row.clone();
+        let router = router.clone();
         select_view.set_on_submit(move |s, link_name| {
-            on_pick_link(Arc::clone(&app_data_ptr), s, &resource_id, link_name, &row)
+            on_pick_link(
+                Arc::clone(&app_data_ptr),
+                s,
+                &router,
+                &resource_id,
+                link_name,
+                &row,
+            )
         });
     }
 
@@ -714,21 +848,21 @@ fn on_pick_link_helper(
 fn on_pick_link(
     app_data_ptr: AppDataPtr,
     siv: &mut cursive::Cursive,
+    router: &Router,
     resource_id: &str,
     link_name: &str,
     row: &ResultRow,
 ) {
+    siv.pop_layer(); // close the link picker
     match on_pick_link_helper(Arc::clone(&app_data_ptr), resource_id, link_name, row) {
-        Ok((target_resource_id, title, rows)) => {
-            siv.pop_layer();
-            siv.pop_layer(); // pop both the link picker and the previous query results
-            siv.add_layer(views::Dialog::around(build_query_results(
-                Arc::clone(&app_data_ptr),
-                &target_resource_id,
-                &title,
-                &rows,
-            )));
-        }
+        Ok((target_resource_id, title, rows)) => router.push(
+            siv,
+            Box::new(QueryResultsRoute {
+                resource_id: target_resource_id,
+                title,
+                rows,
+            }),
+        ),
         Err(err) => {
             eprintln!("Error running link query: {err:?}");
             siv.add_layer(views::Dialog::around(build_query_error(&err)));
