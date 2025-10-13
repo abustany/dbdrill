@@ -8,7 +8,7 @@ use cursive::view::{Nameable, Resizable};
 use cursive::views::{self};
 use jsonpath_rust::JsonPath;
 
-use crate::model::{LinkSearchParam, Resource, SearchParamType};
+use crate::model::{ColumnExpression, LinkCondition, Resource, SearchParamType};
 use crate::sql_value_as_string::SQLValueAsString;
 
 struct AppData {
@@ -668,6 +668,40 @@ fn on_show_links(
     ));
 }
 
+fn evaluate_link_condition(cond: Option<LinkCondition>, row: &ResultRow) -> Result<bool> {
+    let Some(cond) = cond else {
+        return Ok(true);
+    };
+    let matches = match cond {
+        LinkCondition::Eq(ColumnExpression::Name(col_name), expected) => {
+            let val_str: SQLValueAsString = row
+                .0
+                .try_get(col_name.as_str())
+                .with_context(|| format!("error decoding column {col_name} as string"))?;
+            val_str.as_str() == expected
+        }
+        LinkCondition::Eq(
+            ColumnExpression::JsonPath {
+                col_and_path: (col_name, path),
+            },
+            expected,
+        ) => {
+            let col_value: serde_json::Value = row
+                .0
+                .try_get(col_name.as_str())
+                .with_context(|| format!("error decoding column {col_name} as json"))?;
+            let results = col_value
+                .query(&path)
+                .context("error evaluating JSONPath")?;
+            let val_str = extract_single_value(&results)?
+                .as_str()
+                .with_context(|| format!("dereferenced value {:?} is not a string", results[0]))?;
+            val_str == expected
+        }
+    };
+    Ok(matches)
+}
+
 fn build_link_picker(
     app_data_ptr: AppDataPtr,
     router: &Router,
@@ -685,8 +719,15 @@ fn build_link_picker(
             .clone()
     };
 
-    for link in r.links.keys() {
-        select_view.add_item_str(link);
+    for (link_name, link) in r.links {
+        if !evaluate_link_condition(link.condition, row).unwrap_or_else(|err| {
+            eprintln!("Error evaluating condition for link {link_name}: {err}");
+            true
+        }) {
+            continue;
+        }
+
+        select_view.add_item_str(link_name);
     }
 
     select_view.sort_by_label();
@@ -753,7 +794,7 @@ fn on_pick_link_helper(
         .enumerate()
     {
         let (param_value, title_item) = match param {
-            LinkSearchParam::Name(name) => {
+            ColumnExpression::Name(name) => {
                 let col = row
                     .0
                     .columns()
@@ -780,7 +821,7 @@ fn on_pick_link_helper(
 
                 (val, val_title.take_string())
             }
-            LinkSearchParam::JsonPath {
+            ColumnExpression::JsonPath {
                 col_and_path: (col_name, path),
             } => {
                 let col_value_title: SQLValueAsString = row

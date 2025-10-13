@@ -26,7 +26,7 @@ pub struct Search {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
-pub enum LinkSearchParam {
+pub enum ColumnExpression {
     Name(String),
     JsonPath {
         #[serde(rename = "json_path")]
@@ -35,10 +35,18 @@ pub enum LinkSearchParam {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+pub enum LinkCondition {
+    #[serde(rename = "eq")]
+    Eq(ColumnExpression, String),
+}
+
+#[derive(Clone, Debug, Deserialize)]
 pub struct Link {
     pub kind: String,
     pub search: String,
-    pub search_params: Vec<LinkSearchParam>,
+    pub search_params: Vec<ColumnExpression>,
+    #[serde(rename = "if")]
+    pub condition: Option<LinkCondition>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -73,13 +81,25 @@ fn validate_resource_link(resources: &HashMap<String, Resource>, link: &Link) ->
     }
 
     for (idx, p) in link.search_params.iter().enumerate() {
-        if let LinkSearchParam::JsonPath {
+        if let ColumnExpression::JsonPath {
             col_and_path: (_, path),
         } = p
         {
-            jsonpath_rust::parser::parse_json_path(path)
-                .with_context(|| format!("search param {idx} has an empty json_deref"))?;
+            jsonpath_rust::parser::parse_json_path(path).with_context(|| {
+                format!("invalid JSONPath expression for search parameter {idx}")
+            })?;
         }
+    }
+
+    if let Some(LinkCondition::Eq(
+        ColumnExpression::JsonPath {
+            col_and_path: (_, path),
+        },
+        _,
+    )) = &link.condition
+    {
+        jsonpath_rust::parser::parse_json_path(path)
+            .context("link condition (\"if\") is an invalid JSONPath expression")?;
     }
 
     Ok(())
