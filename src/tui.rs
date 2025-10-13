@@ -709,7 +709,7 @@ fn build_link_picker(
 
     views::LinearLayout::vertical()
         .child(views::TextView::new("Links"))
-        .child(select_view)
+        .child(build_shortcut_select_view(select_view, "link_picker"))
 }
 
 fn on_pick_link_helper(
