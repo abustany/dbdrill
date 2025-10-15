@@ -2,6 +2,8 @@
 
 *Navigate the entities in your database at the speed of light ⚡️*
 
+![dbdrill screencast](docs/screencast.gif)
+
 There are plenty of good UIs to manage SQL databases. There are lots of good
 tools to explore SQL schemas. Dbdrill is something else. It allows you to:
 
@@ -37,6 +39,11 @@ dbdrill requires:
   other engines would be easy)
 - a TOML configuration file describing the entities in your database, and the
   links between those entities
+
+This user guide will walk through the few concepts of dbdrill, using a sample
+database as an example. You can find the database dump in
+[docs/sample-db.sql](docs/sample-db.sql) and the dbdrill configuration file in
+[docs/dbdrill.toml](docs/dbdrill.toml).
 
 ### Entities
 
@@ -150,7 +157,7 @@ name = "Post"
 
 [post.search.ids]
 query = "SELECT * FROM posts WHERE id = ANY($1)"
-params = [{name = "IDs", type = "text[]"}]
+params = [{name = "IDs", type = "integer[]"}]
 
 [blog.links."Posts"]
 kind = "post"
@@ -169,10 +176,13 @@ exploring ⛵️
 
 There are two global keyboard shortcuts in dbdrill:
 
-- <kbd>q</kbd> quits
 - <kbd>Escape</kbd> goes back to the previous view
+- <kbd>q</kbd> quits
 
-When listing entities, press <kbd>l</kbd> to bring up the link picker.
+When listing entities:
+
+- <kbd>Enter</kbd> opens a popup showing the full (untruncated) values
+- <kbd>l</kbd> to bring up the link picker.
 
 Dbdrill is designed to be efficiently navigated with the keyboard. Every time
 you need to pick an item in a list, you'll see a letter highlighted in each

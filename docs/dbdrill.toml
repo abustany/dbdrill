@@ -1,0 +1,42 @@
+[user]
+name = "User"
+
+[user.search.id]
+# Assuming our users table has an id column of type SERIAL
+query = "SELECT * FROM users WHERE id = $1" # PostgreSQL uses $n for placeholders
+params = [{name = "ID", type = "integer"}] # params describes the placeholders in the query
+
+[user.search.email]
+query = "SELECT * FROM users WHERE email = $1"
+params = [{name = "Email"}] # type = "text" is default if not specified
+
+[user.search.name]
+query = "SELECT * FROM users WHERE name ILIKE $1"
+params = [{name = "Name pattern"}]
+
+[user.links."Blogs"]
+kind = "blog" # the ID of the target entity is the TOML section name
+search = "editor" # this is the name of the search we defined on blog
+search_params = ["id"] # use the "id" column of our user to fill the search parameter
+
+[blog]
+name = "Blog"
+
+[blog.search.editor] # Search to list all blogs where a user is editor
+query = "SELECT b.* FROM blogs b JOIN user_blogs ub ON (b.id = ub.blog_id) WHERE ub.user_id = $1 AND ub.role = 'editor'"
+params = [{name = "User ID", type = "integer"}]
+
+[post]
+name = "Post"
+
+[post.search.ids]
+query = "SELECT * FROM posts WHERE id = ANY($1)"
+params = [{name = "IDs", type = "integer[]"}]
+
+[blog.links."Posts"]
+kind = "post"
+search = "ids"
+search_params = [{json_path = [
+  "posts", # Take the value of the posts column...
+  "$[*].postId" # and for each entry of the array, extract the postId field
+]}]
