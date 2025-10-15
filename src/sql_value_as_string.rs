@@ -65,6 +65,10 @@ impl postgres::types::FromSql<'_> for SQLValueAsString {
             return Ok(SQLValueAsString::from(jiff::Timestamp::from_sql(ty, raw)?));
         }
 
+        if ty == &postgres::types::Type::UUID {
+            return Ok(SQLValueAsString::from(uuid::Uuid::from_sql(ty, raw)?));
+        }
+
         if ty == &postgres::types::Type::VARCHAR {
             return Ok(SQLValueAsString::from(String::from_sql(ty, raw)?));
         }
@@ -132,14 +136,17 @@ impl postgres::types::FromSql<'_> for SQLValueAsString {
             )));
         }
 
-        if ty == &postgres::types::Type::TIMESTAMPTZ {
-            return Ok(SQLValueAsString::from(jiff::Timestamp::from_sql(ty, raw)?));
-        }
-
         if ty == &postgres::types::Type::TIMESTAMPTZ_ARRAY {
             return Ok(SQLValueAsString(format!(
                 "{:?}",
                 Vec::<jiff::Timestamp>::from_sql(ty, raw)?
+            )));
+        }
+
+        if ty == &postgres::types::Type::UUID_ARRAY {
+            return Ok(SQLValueAsString(format!(
+                "{:?}",
+                Vec::<uuid::Uuid>::from_sql(ty, raw)?
             )));
         }
 
@@ -167,6 +174,7 @@ impl postgres::types::FromSql<'_> for SQLValueAsString {
             || ty == &postgres::types::Type::JSONB
             || ty == &postgres::types::Type::TEXT
             || ty == &postgres::types::Type::TIMESTAMPTZ
+            || ty == &postgres::types::Type::UUID
             || ty == &postgres::types::Type::VARCHAR
             || ty == &postgres::types::Type::BOOL_ARRAY
             || ty == &postgres::types::Type::FLOAT4_ARRAY
@@ -177,6 +185,7 @@ impl postgres::types::FromSql<'_> for SQLValueAsString {
             || ty == &postgres::types::Type::JSONB_ARRAY
             || ty == &postgres::types::Type::TEXT_ARRAY
             || ty == &postgres::types::Type::TIMESTAMPTZ_ARRAY
+            || ty == &postgres::types::Type::UUID_ARRAY
             || ty == &postgres::types::Type::VARCHAR_ARRAY
     }
 }

@@ -11,8 +11,9 @@ cursive_table_view = "0.15.0"
 jiff = "0.2.15"
 jsonpath-rust = "1.0.4"
 native-tls = "0.2.14"
-postgres = { version = "0.19.11", features = ["with-jiff-0_2", "with-serde_json-1"] }
+postgres = { version = "0.19.11", features = ["with-jiff-0_2", "with-serde_json-1", "with-uuid-1"] }
 postgres-native-tls = "0.5.2"
 serde = { version = "1.0.226", features = ["derive"] }
 serde_json = "1.0.145"
 toml = "0.9.7"
+uuid = "1.18.1"

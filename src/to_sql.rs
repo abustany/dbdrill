@@ -123,6 +123,20 @@ pub fn sql_value_from_string(
                 .with_context(|| format!("error parsing value as timestamptz[]: {str_val}"))?;
             Ok(Box::new(array_val))
         }
+        SearchParamType::Uuid => {
+            let ts: uuid::Uuid = str_val
+                .parse()
+                .with_context(|| format!("error parsing value as uuid: {str_val}"))?;
+            Ok(Box::new(ts))
+        }
+        SearchParamType::UuidArray => {
+            let array_val: Vec<uuid::Uuid> = str_val
+                .split(',')
+                .map(|s| s.parse())
+                .collect::<std::result::Result<_, _>>()
+                .with_context(|| format!("error parsing value as uuid[]: {str_val}"))?;
+            Ok(Box::new(array_val))
+        }
         SearchParamType::Varchar => Ok(Box::new(str_val.to_owned())),
         SearchParamType::VarcharArray => {
             let array_val: Vec<String> = str_val.split(',').map(|s| s.to_string()).collect();
@@ -165,11 +179,11 @@ pub fn sql_value_from_json_slice(
                 })
                 .collect::<Result<Vec<f32>>>()?,
         )),
-        SearchParamType::Float8 => Ok(Box::new(
-            extract_single_value(val)?
-                .as_f64()
-                .with_context(|| format!("value is not a number: {:?}", val[0]))?,
-        )),
+        SearchParamType::Float8 => {
+            Ok(Box::new(extract_single_value(val)?.as_f64().with_context(
+                || format!("value is not a number: {:?}", val[0]),
+            )?))
+        }
         SearchParamType::Float8Array => Ok(Box::new(
             val.iter()
                 .map(|val| {
@@ -206,11 +220,11 @@ pub fn sql_value_from_json_slice(
                 })
                 .collect::<Result<Vec<i32>>>()?,
         )),
-        SearchParamType::Int8 => Ok(Box::new(
-            extract_single_value(val)?
-                .as_i64()
-                .with_context(|| format!("value is not a number: {:?}", val[0]))?,
-        )),
+        SearchParamType::Int8 => {
+            Ok(Box::new(extract_single_value(val)?.as_i64().with_context(
+                || format!("value is not a number: {:?}", val[0]),
+            )?))
+        }
         SearchParamType::Int8Array => Ok(Box::new(
             val.iter()
                 .map(|val| {
@@ -258,6 +272,23 @@ pub fn sql_value_from_json_slice(
                         .with_context(|| format!("array element is not a valid timestamp: {val:?}"))
                 })
                 .collect::<Result<Vec<jiff::Timestamp>>>()?,
+        )),
+        SearchParamType::Uuid => Ok(Box::new(
+            extract_single_value(val)?
+                .as_str()
+                .with_context(|| format!("value is not a string: {:?}", val[0]))?
+                .parse::<uuid::Uuid>()
+                .with_context(|| format!("value is not a valid uuid: {:?}", val[0]))?,
+        )),
+        SearchParamType::UuidArray => Ok(Box::new(
+            val.iter()
+                .map(|val| {
+                    val.as_str()
+                        .with_context(|| format!("array element is not a string: {val:?}"))?
+                        .parse::<uuid::Uuid>()
+                        .with_context(|| format!("array element is not a valid uuid: {val:?}"))
+                })
+                .collect::<Result<Vec<uuid::Uuid>>>()?,
         )),
         SearchParamType::Varchar => Ok(Box::new(
             extract_single_value(val)?

@@ -43,6 +43,10 @@ pub enum SearchParamType {
     Timestamptz,
     #[serde(rename = "timestamptz[]", alias = "timestamp with time zone[]")]
     TimestamptzArray,
+    #[serde(rename = "uuid")]
+    Uuid,
+    #[serde(rename = "uuid[]")]
+    UuidArray,
     #[serde(rename = "varchar", alias = "character varying")]
     Varchar,
     #[serde(rename = "varchar[]", alias = "character varying[]")]
