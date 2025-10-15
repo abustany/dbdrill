@@ -5,10 +5,48 @@ use serde::Deserialize;
 
 #[derive(Clone, Debug, Deserialize)]
 pub enum SearchParamType {
-    #[serde(rename = "integer")]
-    Integer,
-    #[serde(rename = "text[]")]
+    #[serde(rename = "bool", alias = "boolean")]
+    Bool,
+    #[serde(rename = "bool[]", alias = "boolean[]")]
+    BoolArray,
+    #[serde(rename = "float4", alias = "real")]
+    Float4,
+    #[serde(rename = "float4[]", alias = "real[]")]
+    Float4Array,
+    #[serde(rename = "float8", alias = "double precision", alias = "double")]
+    Float8,
+    #[serde(rename = "float8[]", alias = "double precision[]", alias = "double[]")]
+    Float8Array,
+    #[serde(rename = "int2", alias = "smallint")]
+    Int2,
+    #[serde(rename = "int2[]", alias = "smallint[]")]
+    Int2Array,
+    #[serde(rename = "int4", alias = "integer", alias = "int")]
+    Int4,
+    #[serde(rename = "int4[]", alias = "integer[]", alias = "int[]")]
+    Int4Array,
+    #[serde(rename = "int8", alias = "bigint")]
+    Int8,
+    #[serde(rename = "int8[]", alias = "bigint[]")]
+    Int8Array,
+    #[serde(rename = "json")]
+    Json,
+    #[serde(rename = "jsonb")]
+    Jsonb,
+    #[serde(rename = "jsonb[]")]
+    JsonbArray,
+    #[serde(rename = "text", alias = "string")]
+    Text,
+    #[serde(rename = "text[]", alias = "string[]")]
     TextArray,
+    #[serde(rename = "timestamptz", alias = "timestamp with time zone")]
+    Timestamptz,
+    #[serde(rename = "timestamptz[]", alias = "timestamp with time zone[]")]
+    TimestamptzArray,
+    #[serde(rename = "varchar", alias = "character varying")]
+    Varchar,
+    #[serde(rename = "varchar[]", alias = "character varying[]")]
+    VarcharArray,
 }
 
 #[derive(Clone, Debug, Deserialize)]

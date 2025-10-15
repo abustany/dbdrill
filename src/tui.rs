@@ -2,14 +2,16 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 use std::sync::{Arc, Mutex};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use cursive::View;
 use cursive::view::{Nameable, Resizable};
 use cursive::views::{self};
 use jsonpath_rust::JsonPath;
 
+use crate::json_helpers::extract_single_value;
 use crate::model::{ColumnExpression, LinkCondition, Resource, SearchParamType};
 use crate::sql_value_as_string::SQLValueAsString;
+use crate::to_sql::{sql_value_from_json_slice, sql_value_from_string};
 
 struct AppData {
     resources: HashMap<String, Resource>,
@@ -390,23 +392,10 @@ fn on_query_helper(
 
         write!(&mut title, "{}={}", &param.name, &str_val)?;
 
-        let val: Box<dyn postgres::types::ToSql + Sync> = match param.ty {
-            None => Box::new(str_val),
-            Some(SearchParamType::Integer) => {
-                let integer_val: i32 = str_val.parse().with_context(|| {
-                    format!(
-                        "error parsing parameter {} as string: {}",
-                        param.name, str_val
-                    )
-                })?;
-                Box::new(integer_val)
-            }
-            Some(SearchParamType::TextArray) => {
-                let array_val: Vec<String> = str_val.split(',').map(|s| s.to_string()).collect();
-                Box::new(array_val)
-            }
-        };
-        param_values.push(val);
+        param_values.push(
+            sql_value_from_string(str_val, param.ty.clone().unwrap_or(SearchParamType::Text))
+                .with_context(|| format!("error parsing parameter {}", param.name))?,
+        );
     }
 
     write!(&mut title, ")")?;
@@ -833,30 +822,10 @@ fn on_pick_link_helper(
                     .try_get(col_name.as_str())
                     .context("error parsing value as JSON")?;
                 let results = col_value.query(path).context("error dereferencing value")?;
-
-                let val: Box<dyn postgres::types::ToSql + Sync> = match target_param.ty {
-                    Some(SearchParamType::Integer) => Box::new(
-                        TryInto::<i32>::try_into(extract_single_value(&results)?
-                                                                .as_i64()
-                                                                .with_context(|| {
-                                                                    format!("dereferenced value {:?} is not a number", results[0])
-                                                                })?).with_context(|| format!("integer values overflows target type: {:?}", results[0]))?
-                                                        )  ,
-                    Some(SearchParamType::TextArray) => Box::new(
-                                            results.into_iter().map(|val| val.as_str().with_context(|| {
-                                                    format!("dereferenced value {val:?} is not a string", )
-                                                }).map(|x| x.to_owned())
-                                            ).collect::<Result<Vec<String>>>()?,
-                                                                            ),
-                    None /* text */ =>  Box::new(
-                        extract_single_value(&results)?
-                                            .as_str()
-                                            .with_context(|| {
-                                                format!("dereferenced value {:?} is not a string", results[0])
-                                            })?
-                                            .to_owned(),
-                                    ) ,
-                };
+                let val = sql_value_from_json_slice(
+                    results.as_slice(),
+                    target_param.ty.clone().unwrap_or(SearchParamType::Text),
+                )?;
 
                 (val, format!("{path}={}", col_value_title.take_string()))
             }
@@ -909,15 +878,6 @@ fn on_pick_link(
             siv.add_layer(views::Dialog::around(build_query_error(&err)));
         }
     };
-}
-
-fn extract_single_value<'a>(vals: &[&'a serde_json::Value]) -> Result<&'a serde_json::Value> {
-    match vals {
-        [value] => Ok(value),
-        _ => {
-            bail!("expected 1 result, got {}", vals.len())
-        }
-    }
 }
 
 #[cfg(test)]

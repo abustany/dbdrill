@@ -31,6 +31,14 @@ impl postgres::types::FromSql<'_> for SQLValueAsString {
             return Ok(SQLValueAsString::from(bool::from_sql(ty, raw)?));
         }
 
+        if ty == &postgres::types::Type::FLOAT4 {
+            return Ok(SQLValueAsString::from(f32::from_sql(ty, raw)?));
+        }
+
+        if ty == &postgres::types::Type::FLOAT8 {
+            return Ok(SQLValueAsString::from(f64::from_sql(ty, raw)?));
+        }
+
         if ty == &postgres::types::Type::INT2 {
             return Ok(SQLValueAsString::from(i16::from_sql(ty, raw)?));
         }
@@ -43,13 +51,21 @@ impl postgres::types::FromSql<'_> for SQLValueAsString {
             return Ok(SQLValueAsString::from(i64::from_sql(ty, raw)?));
         }
 
-        if ty == &postgres::types::Type::JSONB {
+        if ty == &postgres::types::Type::JSON || ty == &postgres::types::Type::JSONB {
             return Ok(SQLValueAsString::from(serde_json::Value::from_sql(
                 ty, raw,
             )?));
         }
 
         if ty == &postgres::types::Type::TEXT {
+            return Ok(SQLValueAsString::from(String::from_sql(ty, raw)?));
+        }
+
+        if ty == &postgres::types::Type::TIMESTAMPTZ {
+            return Ok(SQLValueAsString::from(jiff::Timestamp::from_sql(ty, raw)?));
+        }
+
+        if ty == &postgres::types::Type::VARCHAR {
             return Ok(SQLValueAsString::from(String::from_sql(ty, raw)?));
         }
 
@@ -60,8 +76,71 @@ impl postgres::types::FromSql<'_> for SQLValueAsString {
             )));
         }
 
+        if ty == &postgres::types::Type::BOOL_ARRAY {
+            return Ok(SQLValueAsString(format!(
+                "{:?}",
+                Vec::<bool>::from_sql(ty, raw)?
+            )));
+        }
+
+        if ty == &postgres::types::Type::INT2_ARRAY {
+            return Ok(SQLValueAsString(format!(
+                "{:?}",
+                Vec::<i16>::from_sql(ty, raw)?
+            )));
+        }
+
+        if ty == &postgres::types::Type::INT4_ARRAY {
+            return Ok(SQLValueAsString(format!(
+                "{:?}",
+                Vec::<i32>::from_sql(ty, raw)?
+            )));
+        }
+
+        if ty == &postgres::types::Type::INT8_ARRAY {
+            return Ok(SQLValueAsString(format!(
+                "{:?}",
+                Vec::<i64>::from_sql(ty, raw)?
+            )));
+        }
+
+        if ty == &postgres::types::Type::FLOAT4_ARRAY {
+            return Ok(SQLValueAsString(format!(
+                "{:?}",
+                Vec::<f32>::from_sql(ty, raw)?
+            )));
+        }
+
+        if ty == &postgres::types::Type::FLOAT8_ARRAY {
+            return Ok(SQLValueAsString(format!(
+                "{:?}",
+                Vec::<f64>::from_sql(ty, raw)?
+            )));
+        }
+
+        if ty == &postgres::types::Type::VARCHAR_ARRAY {
+            return Ok(SQLValueAsString(format!(
+                "{:?}",
+                Vec::<String>::from_sql(ty, raw)?
+            )));
+        }
+
+        if ty == &postgres::types::Type::JSON_ARRAY || ty == &postgres::types::Type::JSONB_ARRAY {
+            return Ok(SQLValueAsString(format!(
+                "{:?}",
+                Vec::<serde_json::Value>::from_sql(ty, raw)?
+            )));
+        }
+
         if ty == &postgres::types::Type::TIMESTAMPTZ {
             return Ok(SQLValueAsString::from(jiff::Timestamp::from_sql(ty, raw)?));
+        }
+
+        if ty == &postgres::types::Type::TIMESTAMPTZ_ARRAY {
+            return Ok(SQLValueAsString(format!(
+                "{:?}",
+                Vec::<jiff::Timestamp>::from_sql(ty, raw)?
+            )));
         }
 
         Err(anyhow!("unsupported type: {ty}").into_boxed_dyn_error())
@@ -79,12 +158,25 @@ impl postgres::types::FromSql<'_> for SQLValueAsString {
 
     fn accepts(ty: &postgres::types::Type) -> bool {
         ty == &postgres::types::Type::BOOL
+            || ty == &postgres::types::Type::FLOAT4
+            || ty == &postgres::types::Type::FLOAT8
             || ty == &postgres::types::Type::INT2
             || ty == &postgres::types::Type::INT4
             || ty == &postgres::types::Type::INT8
+            || ty == &postgres::types::Type::JSON
             || ty == &postgres::types::Type::JSONB
             || ty == &postgres::types::Type::TEXT
-            || ty == &postgres::types::Type::TEXT_ARRAY
             || ty == &postgres::types::Type::TIMESTAMPTZ
+            || ty == &postgres::types::Type::VARCHAR
+            || ty == &postgres::types::Type::BOOL_ARRAY
+            || ty == &postgres::types::Type::FLOAT4_ARRAY
+            || ty == &postgres::types::Type::FLOAT8_ARRAY
+            || ty == &postgres::types::Type::INT2_ARRAY
+            || ty == &postgres::types::Type::INT4_ARRAY
+            || ty == &postgres::types::Type::INT8_ARRAY
+            || ty == &postgres::types::Type::JSONB_ARRAY
+            || ty == &postgres::types::Type::TEXT_ARRAY
+            || ty == &postgres::types::Type::TIMESTAMPTZ_ARRAY
+            || ty == &postgres::types::Type::VARCHAR_ARRAY
     }
 }

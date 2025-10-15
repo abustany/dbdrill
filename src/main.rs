@@ -7,8 +7,9 @@ use clap::Parser;
 mod model;
 use model::Resource;
 
+mod json_helpers;
 mod sql_value_as_string;
-
+mod to_sql;
 mod tui;
 
 #[derive(Parser)]
