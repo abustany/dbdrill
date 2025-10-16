@@ -117,6 +117,15 @@ fn build_shortcut_select_view<T: 'static + Send + Sync + Clone>(
     res
 }
 
+fn get_resource(app_data_ptr: &AppDataPtr, resource_id: &str) -> Resource {
+    let app_data = app_data_ptr.lock().unwrap();
+    app_data
+        .resources
+        .get(resource_id)
+        .expect("invalid resource id")
+        .clone()
+}
+
 trait Route {
     fn mount(&self, app_data_ptr: AppDataPtr, siv: &mut cursive::Cursive, router: &Router);
     fn unmount(&self, app_data_ptr: AppDataPtr, siv: &mut cursive::Cursive, router: &Router);
@@ -247,14 +256,7 @@ fn build_search_picker(
 ) -> impl cursive::view::View {
     let mut select_view = views::SelectView::new();
 
-    let r = {
-        let app_data = app_data_ptr.lock().unwrap();
-        app_data
-            .resources
-            .get(resource_id)
-            .expect("invalid resource id")
-            .clone()
-    };
+    let r = get_resource(&app_data_ptr, resource_id);
 
     for search in r.search.keys() {
         select_view.add_item_str(search);
@@ -291,6 +293,7 @@ struct QueryRoute {
 impl Route for QueryRoute {
     fn mount(&self, app_data_ptr: AppDataPtr, siv: &mut cursive::Cursive, router: &Router) {
         let router = router.clone();
+
         siv.add_layer(views::Dialog::around(
             views::OnEventView::new(build_query(
                 Arc::clone(&app_data_ptr),
@@ -315,15 +318,7 @@ fn build_query(
     resource_id: &str,
     search_id: &str,
 ) -> impl cursive::view::View {
-    let r = {
-        let app_data = app_data_ptr.lock().unwrap();
-        app_data
-            .resources
-            .get(resource_id)
-            .expect("invalid resource id")
-            .clone()
-    };
-
+    let r = get_resource(&app_data_ptr, resource_id);
     let s = r.search.get(search_id).expect("invalid search id");
 
     let title = format!("Search {} by {}", &r.name, search_id);
@@ -371,14 +366,7 @@ fn on_query_helper(
     search_id: &str,
     params_str_values: &[String],
 ) -> Result<(String, Vec<postgres::Row>)> {
-    let r = {
-        let app_data = app_data_ptr.lock().unwrap();
-        app_data
-            .resources
-            .get(resource_id)
-            .expect("invalid resource id")
-            .clone()
-    };
+    let r = get_resource(&app_data_ptr, resource_id);
     let s = r.search.get(search_id).expect("invalid search id");
     let mut title = String::new();
     let mut param_values: Vec<Box<dyn postgres::types::ToSql + Sync>> = Vec::new();
@@ -419,14 +407,7 @@ fn on_query(
     resource_id: &str,
     search_id: &str,
 ) {
-    let r = {
-        let app_data = app_data_ptr.lock().unwrap();
-        app_data
-            .resources
-            .get(resource_id)
-            .expect("invalid resource id")
-            .clone()
-    };
+    let r = get_resource(&app_data_ptr, resource_id);
     let s = r.search.get(search_id).expect("invalid search id");
     let param_names: Vec<&str> = s.params.iter().map(|p| p.name.as_str()).collect();
 
@@ -699,14 +680,7 @@ fn build_link_picker(
 ) -> impl cursive::view::View {
     let mut select_view = views::SelectView::new();
 
-    let r = {
-        let app_data = app_data_ptr.lock().unwrap();
-        app_data
-            .resources
-            .get(resource_id)
-            .expect("invalid resource id")
-            .clone()
-    };
+    let r = get_resource(&app_data_ptr, resource_id);
 
     for (link_name, link) in r.links {
         if !evaluate_link_condition(link.condition, row).unwrap_or_else(|err| {
@@ -748,14 +722,7 @@ fn on_pick_link_helper(
     link_name: &str,
     row: &ResultRow,
 ) -> Result<(String, String, Vec<postgres::Row>)> {
-    let r = {
-        let app_data = app_data_ptr.lock().unwrap();
-        app_data
-            .resources
-            .get(resource_id)
-            .expect("invalid resource id")
-            .clone()
-    };
+    let r = get_resource(&app_data_ptr, resource_id);
     let links = r.links;
     let link = links.get(link_name).expect("invalid link name");
     let link_target_resource = {
