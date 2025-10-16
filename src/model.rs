@@ -63,6 +63,7 @@ pub struct SearchParam {
 #[derive(Clone, Debug, Deserialize)]
 pub struct Search {
     pub query: String,
+    #[serde(default)]
     pub params: Vec<SearchParam>,
 }
 
