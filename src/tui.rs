@@ -268,13 +268,26 @@ fn build_search_picker(
         let resource_id = resource_id.to_owned();
         let router = router.clone();
         select_view.set_on_submit(move |siv, search_id: &str| {
-            router.push(
-                siv,
-                Box::new(QueryRoute {
-                    resource_id: resource_id.clone(),
-                    search_id: search_id.to_owned(),
-                }),
-            );
+            let r = get_resource(&app_data_ptr, &resource_id);
+            let s = r.search.get(search_id).expect("invalid search id");
+
+            if s.params.is_empty() {
+                on_query(
+                    Arc::clone(&app_data_ptr),
+                    siv,
+                    &router,
+                    &resource_id,
+                    search_id,
+                );
+            } else {
+                router.push(
+                    siv,
+                    Box::new(QueryRoute {
+                        resource_id: resource_id.clone(),
+                        search_id: search_id.to_owned(),
+                    }),
+                );
+            }
         });
     }
 
