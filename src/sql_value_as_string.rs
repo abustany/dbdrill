@@ -182,6 +182,7 @@ impl postgres::types::FromSql<'_> for SQLValueAsString {
             || ty == &postgres::types::Type::INT2_ARRAY
             || ty == &postgres::types::Type::INT4_ARRAY
             || ty == &postgres::types::Type::INT8_ARRAY
+            || ty == &postgres::types::Type::JSON_ARRAY
             || ty == &postgres::types::Type::JSONB_ARRAY
             || ty == &postgres::types::Type::TEXT_ARRAY
             || ty == &postgres::types::Type::TIMESTAMPTZ_ARRAY

@@ -2,101 +2,49 @@ use anyhow::{Context, Result};
 
 use crate::{json_helpers::extract_single_value, model::SearchParamType};
 
+macro_rules! parse_single_value {
+    ($str_val:expr, $type:ty, $type_name:expr) => {{
+        let val: $type = $str_val
+            .parse()
+            .with_context(|| format!("error parsing value as {}: {}", $type_name, $str_val))?;
+        Ok(Box::new(val))
+    }};
+}
+
+macro_rules! parse_array {
+    ($str_val:expr, $type:ty, $type_name:expr) => {{
+        let array_val: Vec<$type> = $str_val
+            .split(',')
+            .map(|s| s.parse())
+            .collect::<std::result::Result<_, _>>()
+            .with_context(|| format!("error parsing value as {}[]: {}", $type_name, $str_val))?;
+        Ok(Box::new(array_val))
+    }};
+}
+
 pub fn sql_value_from_string(
     str_val: &str,
     ty: SearchParamType,
 ) -> Result<Box<dyn postgres::types::ToSql + Sync>> {
     match ty {
-        SearchParamType::Bool => {
-            let bool_val: bool = str_val
-                .parse()
-                .with_context(|| format!("error parsing value as bool: {str_val}"))?;
-            Ok(Box::new(bool_val))
-        }
-        SearchParamType::BoolArray => {
-            let array_val: Vec<bool> = str_val
-                .split(',')
-                .map(|s| s.parse())
-                .collect::<std::result::Result<_, _>>()
-                .with_context(|| format!("error parsing value as bool[]: {str_val}"))?;
-            Ok(Box::new(array_val))
-        }
-        SearchParamType::Float4 => {
-            let float_val: f32 = str_val
-                .parse()
-                .with_context(|| format!("error parsing value as float4: {str_val}"))?;
-            Ok(Box::new(float_val))
-        }
-        SearchParamType::Float4Array => {
-            let array_val: Vec<f32> = str_val
-                .split(',')
-                .map(|s| s.parse())
-                .collect::<std::result::Result<_, _>>()
-                .with_context(|| format!("error parsing value as float4[]: {str_val}"))?;
-            Ok(Box::new(array_val))
-        }
-        SearchParamType::Float8 => {
-            let float_val: f64 = str_val
-                .parse()
-                .with_context(|| format!("error parsing value as float8: {str_val}"))?;
-            Ok(Box::new(float_val))
-        }
-        SearchParamType::Float8Array => {
-            let array_val: Vec<f64> = str_val
-                .split(',')
-                .map(|s| s.parse())
-                .collect::<std::result::Result<_, _>>()
-                .with_context(|| format!("error parsing value as float8[]: {str_val}"))?;
-            Ok(Box::new(array_val))
-        }
-        SearchParamType::Int2 => {
-            let int_val: i16 = str_val
-                .parse()
-                .with_context(|| format!("error parsing value as int2: {str_val}"))?;
-            Ok(Box::new(int_val))
-        }
-        SearchParamType::Int4 => {
-            let integer_val: i32 = str_val
-                .parse()
-                .with_context(|| format!("error parsing value as int4: {str_val}",))?;
-            Ok(Box::new(integer_val))
-        }
-        SearchParamType::Int2Array => {
-            let array_val: Vec<i16> = str_val
-                .split(',')
-                .map(|s| s.parse())
-                .collect::<std::result::Result<_, _>>()
-                .with_context(|| format!("error parsing value as int2[]: {str_val}"))?;
-            Ok(Box::new(array_val))
-        }
-        SearchParamType::Int4Array => {
-            let array_val: Vec<i32> = str_val
-                .split(',')
-                .map(|s| s.parse())
-                .collect::<std::result::Result<_, _>>()
-                .with_context(|| format!("error parsing value as int4[]: {str_val}"))?;
-            Ok(Box::new(array_val))
-        }
-        SearchParamType::Int8 => {
-            let int_val: i64 = str_val
-                .parse()
-                .with_context(|| format!("error parsing value as int8: {str_val}"))?;
-            Ok(Box::new(int_val))
-        }
-        SearchParamType::Int8Array => {
-            let array_val: Vec<i64> = str_val
-                .split(',')
-                .map(|s| s.parse())
-                .collect::<std::result::Result<_, _>>()
-                .with_context(|| format!("error parsing value as int8[]: {str_val}"))?;
-            Ok(Box::new(array_val))
-        }
+        SearchParamType::Bool => parse_single_value!(str_val, bool, "bool"),
+        SearchParamType::BoolArray => parse_array!(str_val, bool, "bool"),
+        SearchParamType::Float4 => parse_single_value!(str_val, f32, "float4"),
+        SearchParamType::Float4Array => parse_array!(str_val, f32, "float4"),
+        SearchParamType::Float8 => parse_single_value!(str_val, f64, "float8"),
+        SearchParamType::Float8Array => parse_array!(str_val, f64, "float8"),
+        SearchParamType::Int2 => parse_single_value!(str_val, i16, "int2"),
+        SearchParamType::Int4 => parse_single_value!(str_val, i32, "int4"),
+        SearchParamType::Int2Array => parse_array!(str_val, i16, "int2"),
+        SearchParamType::Int4Array => parse_array!(str_val, i32, "int4"),
+        SearchParamType::Int8 => parse_single_value!(str_val, i64, "int8"),
+        SearchParamType::Int8Array => parse_array!(str_val, i64, "int8"),
         SearchParamType::Json | SearchParamType::Jsonb => {
             let json_val: serde_json::Value = serde_json::from_str(str_val)
                 .with_context(|| format!("error parsing value as json: {str_val}"))?;
             Ok(Box::new(json_val))
         }
-        SearchParamType::JsonbArray => {
+        SearchParamType::JsonArray | SearchParamType::JsonbArray => {
             let array_val: Vec<serde_json::Value> = str_val
                 .split(',')
                 .map(serde_json::from_str)
@@ -104,45 +52,101 @@ pub fn sql_value_from_string(
                 .with_context(|| format!("error parsing value as json[]: {str_val}"))?;
             Ok(Box::new(array_val))
         }
-        SearchParamType::Text => Ok(Box::new(str_val.to_owned())),
-        SearchParamType::TextArray => {
+        SearchParamType::Text | SearchParamType::Varchar => Ok(Box::new(str_val.to_owned())),
+        SearchParamType::TextArray | SearchParamType::VarcharArray => {
             let array_val: Vec<String> = str_val.split(',').map(|s| s.to_string()).collect();
             Ok(Box::new(array_val))
         }
         SearchParamType::Timestamptz => {
-            let ts: jiff::Timestamp = str_val
-                .parse()
-                .with_context(|| format!("error parsing value as timestamptz: {str_val}"))?;
-            Ok(Box::new(ts))
+            parse_single_value!(str_val, jiff::Timestamp, "timestamptz")
         }
-        SearchParamType::TimestamptzArray => {
-            let array_val: Vec<jiff::Timestamp> = str_val
-                .split(',')
-                .map(|s| s.parse())
-                .collect::<std::result::Result<_, _>>()
-                .with_context(|| format!("error parsing value as timestamptz[]: {str_val}"))?;
-            Ok(Box::new(array_val))
-        }
-        SearchParamType::Uuid => {
-            let ts: uuid::Uuid = str_val
-                .parse()
-                .with_context(|| format!("error parsing value as uuid: {str_val}"))?;
-            Ok(Box::new(ts))
-        }
-        SearchParamType::UuidArray => {
-            let array_val: Vec<uuid::Uuid> = str_val
-                .split(',')
-                .map(|s| s.parse())
-                .collect::<std::result::Result<_, _>>()
-                .with_context(|| format!("error parsing value as uuid[]: {str_val}"))?;
-            Ok(Box::new(array_val))
-        }
-        SearchParamType::Varchar => Ok(Box::new(str_val.to_owned())),
-        SearchParamType::VarcharArray => {
-            let array_val: Vec<String> = str_val.split(',').map(|s| s.to_string()).collect();
-            Ok(Box::new(array_val))
-        }
+        SearchParamType::TimestamptzArray => parse_array!(str_val, jiff::Timestamp, "timestamptz"),
+        SearchParamType::Uuid => parse_single_value!(str_val, uuid::Uuid, "uuid"),
+        SearchParamType::UuidArray => parse_array!(str_val, uuid::Uuid, "uuid"),
     }
+}
+
+macro_rules! extract_json_value {
+    ($val:expr, $method:ident, $type:ty, $type_name:expr) => {{
+        Ok(Box::new(
+            extract_single_value($val)?
+                .$method()
+                .with_context(|| format!("value is not a {}: {:?}", $type_name, $val[0]))?
+                as $type,
+        ))
+    }};
+}
+
+macro_rules! extract_json_array {
+    ($val:expr, $method:ident, $type:ty, $type_name:expr) => {{
+        Ok(Box::new(
+            $val.iter()
+                .map(|val| {
+                    Ok(val.$method().with_context(|| {
+                        format!("array element is not a {}: {:?}", $type_name, val)
+                    })? as $type)
+                })
+                .collect::<Result<Vec<$type>>>()?,
+        ))
+    }};
+}
+
+macro_rules! extract_json_int {
+    ($val:expr, $type:ty, $type_name:expr) => {{
+        Ok(Box::new(
+            TryInto::<$type>::try_into(
+                extract_single_value($val)?
+                    .as_i64()
+                    .with_context(|| format!("value is not a number: {:?}", $val[0]))?,
+            )
+            .with_context(|| format!("value overflows {}: {:?}", $type_name, $val[0]))?,
+        ))
+    }};
+}
+
+macro_rules! extract_json_int_array {
+    ($val:expr, $type:ty, $type_name:expr) => {{
+        Ok(Box::new(
+            $val.iter()
+                .map(|val| {
+                    TryInto::<$type>::try_into(
+                        val.as_i64()
+                            .with_context(|| format!("array element is not a number: {val:?}"))?,
+                    )
+                    .with_context(|| format!("array element overflows {}: {val:?}", $type_name))
+                })
+                .collect::<Result<Vec<$type>>>()?,
+        ))
+    }};
+}
+
+macro_rules! extract_json_parse {
+    ($val:expr, $type:ty, $type_name:expr) => {{
+        Ok(Box::new(
+            extract_single_value($val)?
+                .as_str()
+                .with_context(|| format!("value is not a string: {:?}", $val[0]))?
+                .parse::<$type>()
+                .with_context(|| format!("value is not a valid {}: {:?}", $type_name, $val[0]))?,
+        ))
+    }};
+}
+
+macro_rules! extract_json_parse_array {
+    ($val:expr, $type:ty, $type_name:expr) => {{
+        Ok(Box::new(
+            $val.iter()
+                .map(|val| {
+                    val.as_str()
+                        .with_context(|| format!("array element is not a string: {val:?}"))?
+                        .parse::<$type>()
+                        .with_context(|| {
+                            format!("array element is not a valid {}: {val:?}", $type_name)
+                        })
+                })
+                .collect::<Result<Vec<$type>>>()?,
+        ))
+    }};
 }
 
 pub fn sql_value_from_json_slice(
@@ -150,104 +154,33 @@ pub fn sql_value_from_json_slice(
     ty: SearchParamType,
 ) -> Result<Box<dyn postgres::types::ToSql + Sync>> {
     match ty {
-        SearchParamType::Bool => Ok(Box::new(
-            extract_single_value(val)?
-                .as_bool()
-                .with_context(|| format!("value is not a boolean: {:?}", val[0]))?,
-        )),
-        SearchParamType::BoolArray => Ok(Box::new(
-            val.iter()
-                .map(|val| {
-                    val.as_bool()
-                        .with_context(|| format!("array element is not a boolean: {val:?}"))
-                })
-                .collect::<Result<Vec<bool>>>()?,
-        )),
-        SearchParamType::Float4 => Ok(Box::new(
-            extract_single_value(val)?
-                .as_f64()
-                .with_context(|| format!("value is not a number: {:?}", val[0]))?
-                as f32,
-        )),
-        SearchParamType::Float4Array => Ok(Box::new(
-            val.iter()
-                .map(|val| {
-                    Ok(val
-                        .as_f64()
-                        .with_context(|| format!("array element is not a number: {val:?}"))?
-                        as f32)
-                })
-                .collect::<Result<Vec<f32>>>()?,
-        )),
-        SearchParamType::Float8 => {
-            Ok(Box::new(extract_single_value(val)?.as_f64().with_context(
-                || format!("value is not a number: {:?}", val[0]),
-            )?))
-        }
-        SearchParamType::Float8Array => Ok(Box::new(
-            val.iter()
-                .map(|val| {
-                    val.as_f64()
-                        .with_context(|| format!("array element is not a number: {val:?}"))
-                })
-                .collect::<Result<Vec<f64>>>()?,
-        )),
-        SearchParamType::Int2 => Ok(Box::new(
-            TryInto::<i16>::try_into(
-                extract_single_value(val)?
-                    .as_i64()
-                    .with_context(|| format!("value is not a number: {:?}", val[0]))?,
-            )
-            .with_context(|| format!("value overflows target type: {:?}", val[0]))?,
-        )),
-        SearchParamType::Int2Array => todo!(),
-        SearchParamType::Int4 => Ok(Box::new(
-            TryInto::<i32>::try_into(
-                extract_single_value(val)?
-                    .as_i64()
-                    .with_context(|| format!("value is not a number: {:?}", val[0]))?,
-            )
-            .with_context(|| format!("value overflows target type: {:?}", val[0]))?,
-        )),
-        SearchParamType::Int4Array => Ok(Box::new(
-            val.iter()
-                .map(|val| {
-                    TryInto::<i32>::try_into(
-                        val.as_i64()
-                            .with_context(|| format!("array element is not a number: {val:?}"))?,
-                    )
-                    .with_context(|| format!("array element overflows target type: {val:?}"))
-                })
-                .collect::<Result<Vec<i32>>>()?,
-        )),
-        SearchParamType::Int8 => {
-            Ok(Box::new(extract_single_value(val)?.as_i64().with_context(
-                || format!("value is not a number: {:?}", val[0]),
-            )?))
-        }
-        SearchParamType::Int8Array => Ok(Box::new(
-            val.iter()
-                .map(|val| {
-                    val.as_i64()
-                        .with_context(|| format!("array element is not a number: {val:?}"))
-                })
-                .collect::<Result<Vec<i64>>>()?,
-        )),
+        SearchParamType::Bool => extract_json_value!(val, as_bool, bool, "boolean"),
+        SearchParamType::BoolArray => extract_json_array!(val, as_bool, bool, "boolean"),
+        SearchParamType::Float4 => extract_json_value!(val, as_f64, f32, "number"),
+        SearchParamType::Float4Array => extract_json_array!(val, as_f64, f32, "number"),
+        SearchParamType::Float8 => extract_json_value!(val, as_f64, f64, "number"),
+        SearchParamType::Float8Array => extract_json_array!(val, as_f64, f64, "number"),
+        SearchParamType::Int2 => extract_json_int!(val, i16, "int2"),
+        SearchParamType::Int2Array => extract_json_int_array!(val, i16, "int2"),
+        SearchParamType::Int4 => extract_json_int!(val, i32, "int4"),
+        SearchParamType::Int4Array => extract_json_int_array!(val, i32, "int4"),
+        SearchParamType::Int8 => extract_json_value!(val, as_i64, i64, "number"),
+        SearchParamType::Int8Array => extract_json_array!(val, as_i64, i64, "number"),
         SearchParamType::Json | SearchParamType::Jsonb => {
             Ok(Box::new(extract_single_value(val)?.clone()))
         }
-        SearchParamType::JsonbArray => Ok(Box::new(
+        SearchParamType::JsonArray | SearchParamType::JsonbArray => Ok(Box::new(
             val.iter()
                 .map(|&v| v.clone())
                 .collect::<Vec<serde_json::Value>>(),
         )),
-        SearchParamType::Text => Ok(Box::new(
+        SearchParamType::Text | SearchParamType::Varchar => Ok(Box::new(
             extract_single_value(val)?
                 .as_str()
                 .with_context(|| format!("value is not a string: {:?}", val[0]))?
                 .to_owned(),
         )),
-        SearchParamType::TextArray => Ok(Box::new(
+        SearchParamType::TextArray | SearchParamType::VarcharArray => Ok(Box::new(
             val.iter()
                 .map(|val| {
                     val.as_str()
@@ -256,54 +189,11 @@ pub fn sql_value_from_json_slice(
                 })
                 .collect::<Result<Vec<String>>>()?,
         )),
-        SearchParamType::Timestamptz => Ok(Box::new(
-            extract_single_value(val)?
-                .as_str()
-                .with_context(|| format!("value is not a string: {:?}", val[0]))?
-                .parse::<jiff::Timestamp>()
-                .with_context(|| format!("value is not a valid timestamp: {:?}", val[0]))?,
-        )),
-        SearchParamType::TimestamptzArray => Ok(Box::new(
-            val.iter()
-                .map(|val| {
-                    val.as_str()
-                        .with_context(|| format!("array element is not a string: {val:?}"))?
-                        .parse::<jiff::Timestamp>()
-                        .with_context(|| format!("array element is not a valid timestamp: {val:?}"))
-                })
-                .collect::<Result<Vec<jiff::Timestamp>>>()?,
-        )),
-        SearchParamType::Uuid => Ok(Box::new(
-            extract_single_value(val)?
-                .as_str()
-                .with_context(|| format!("value is not a string: {:?}", val[0]))?
-                .parse::<uuid::Uuid>()
-                .with_context(|| format!("value is not a valid uuid: {:?}", val[0]))?,
-        )),
-        SearchParamType::UuidArray => Ok(Box::new(
-            val.iter()
-                .map(|val| {
-                    val.as_str()
-                        .with_context(|| format!("array element is not a string: {val:?}"))?
-                        .parse::<uuid::Uuid>()
-                        .with_context(|| format!("array element is not a valid uuid: {val:?}"))
-                })
-                .collect::<Result<Vec<uuid::Uuid>>>()?,
-        )),
-        SearchParamType::Varchar => Ok(Box::new(
-            extract_single_value(val)?
-                .as_str()
-                .with_context(|| format!("value is not a string: {:?}", val[0]))?
-                .to_owned(),
-        )),
-        SearchParamType::VarcharArray => Ok(Box::new(
-            val.iter()
-                .map(|val| {
-                    val.as_str()
-                        .with_context(|| format!("array element is not a string: {val:?}"))
-                        .map(|x| x.to_owned())
-                })
-                .collect::<Result<Vec<String>>>()?,
-        )),
+        SearchParamType::Timestamptz => extract_json_parse!(val, jiff::Timestamp, "timestamp"),
+        SearchParamType::TimestamptzArray => {
+            extract_json_parse_array!(val, jiff::Timestamp, "timestamp")
+        }
+        SearchParamType::Uuid => extract_json_parse!(val, uuid::Uuid, "uuid"),
+        SearchParamType::UuidArray => extract_json_parse_array!(val, uuid::Uuid, "uuid"),
     }
 }

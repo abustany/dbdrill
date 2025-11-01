@@ -31,6 +31,8 @@ pub enum SearchParamType {
     Int8Array,
     #[serde(rename = "json")]
     Json,
+    #[serde(rename = "json[]")]
+    JsonArray,
     #[serde(rename = "jsonb")]
     Jsonb,
     #[serde(rename = "jsonb[]")]
