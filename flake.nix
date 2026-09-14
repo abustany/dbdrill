@@ -3,7 +3,7 @@
   description = "dbdrill";
 
   inputs = {
-    nixpkgs.url  = "github:NixOS/nixpkgs/nixos-25.05";
+    nixpkgs.url  = "github:NixOS/nixpkgs/nixos-26.05";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs = {
