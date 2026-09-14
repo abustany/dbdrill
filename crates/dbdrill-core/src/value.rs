@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::fmt;
 use std::sync::Arc;
 
@@ -121,6 +122,58 @@ define_value! {
         TextArray(String) => [TEXT_ARRAY, VARCHAR_ARRAY],
         TimestamptzArray(jiff::Timestamp) => [TIMESTAMPTZ_ARRAY],
         UuidArray(uuid::Uuid) => [UUID_ARRAY],
+    }
+}
+
+impl Value {
+    /// Orders two values for sorting.
+    ///
+    /// Numbers are compared as numbers; everything else is compared as it is
+    /// displayed. That is only a shortcut for types whose text form already
+    /// sorts correctly: timestamps are RFC 3339, booleans are "false" before
+    /// "true", and for the rest any stable order will do.
+    pub fn compare(&self, other: &Value) -> Ordering {
+        if let (Some(a), Some(b)) = (self.as_int(), other.as_int()) {
+            return a.cmp(&b);
+        }
+
+        if let (Some(a), Some(b)) = (self.as_float(), other.as_float()) {
+            return a.total_cmp(&b);
+        }
+
+        self.to_string().cmp(&other.to_string())
+    }
+
+    /// The value laid out for reading on its own, rather than in a table cell.
+    ///
+    /// Only JSON differs from [`Display`](fmt::Display): it is indented, since
+    /// the one-line form is unreadable past a couple of fields.
+    pub fn to_pretty_string(&self) -> String {
+        match self {
+            Value::Json(json) => {
+                serde_json::to_string_pretty(json).unwrap_or_else(|_| json.to_string())
+            }
+            other => other.to_string(),
+        }
+    }
+
+    /// The value as an integer, when it is one, so that whole numbers compare
+    /// exactly rather than through a float.
+    fn as_int(&self) -> Option<i64> {
+        match self {
+            Value::Int2(v) => Some(i64::from(*v)),
+            Value::Int4(v) => Some(i64::from(*v)),
+            Value::Int8(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    fn as_float(&self) -> Option<f64> {
+        match self {
+            Value::Float4(v) => Some(f64::from(*v)),
+            Value::Float8(v) => Some(*v),
+            _ => self.as_int().map(|v| v as f64),
+        }
     }
 }
 
@@ -341,6 +394,77 @@ mod tests {
             ],
             vec![vec![Value::Int4(1), Value::Text("a".to_owned())]],
         )
+    }
+
+    #[test]
+    fn numbers_sort_as_numbers_not_as_text() {
+        assert_eq!(Value::Int4(9).compare(&Value::Int4(10)), Ordering::Less);
+        assert_eq!(Value::Int8(9).compare(&Value::Int2(10)), Ordering::Less);
+        assert_eq!(Value::Float8(9.5).compare(&Value::Int4(10)), Ordering::Less);
+        assert_eq!(Value::Int4(-2).compare(&Value::Int4(1)), Ordering::Less);
+    }
+
+    #[test]
+    fn large_integers_compare_exactly() {
+        // Both of these are the same number once put through an f64.
+        let a = Value::Int8(i64::MAX);
+        let b = Value::Int8(i64::MAX - 1);
+
+        assert_eq!(a.compare(&b), Ordering::Greater);
+    }
+
+    #[test]
+    fn everything_else_sorts_the_way_it_reads() {
+        let (a, b) = (
+            Value::Text("apple".to_owned()),
+            Value::Text("banana".to_owned()),
+        );
+        assert_eq!(a.compare(&b), Ordering::Less);
+
+        // Timestamps read as RFC 3339, which sorts chronologically.
+        let (early, late) = (
+            Value::Timestamptz(timestamp("2024-01-02T03:04:05Z")),
+            Value::Timestamptz(timestamp("2024-11-02T03:04:05Z")),
+        );
+        assert_eq!(early.compare(&late), Ordering::Less);
+
+        assert_eq!(
+            Value::Bool(false).compare(&Value::Bool(true)),
+            Ordering::Less
+        );
+        assert_eq!(Value::Int4(1).compare(&Value::Int4(1)), Ordering::Equal);
+    }
+
+    #[test]
+    fn values_of_different_kinds_still_have_an_order() {
+        let mixed = Value::Text("x".to_owned()).compare(&Value::Null);
+
+        assert_ne!(mixed, Ordering::Equal);
+        assert_eq!(
+            Value::Text("x".to_owned()).compare(&Value::Null),
+            mixed,
+            "the order changed between calls"
+        );
+    }
+
+    #[test]
+    fn json_is_laid_out_when_read_on_its_own() {
+        let value = Value::Json(serde_json::json!({"a": 1}));
+
+        assert_eq!(value.to_string(), r#"{"a":1}"#);
+        assert_eq!(value.to_pretty_string(), "{\n  \"a\": 1\n}");
+    }
+
+    #[test]
+    fn other_values_read_the_same_either_way() {
+        for value in [
+            Value::Null,
+            Value::Int4(1),
+            Value::Text("x".to_owned()),
+            Value::TextArray(vec!["a".to_owned()]),
+        ] {
+            assert_eq!(value.to_pretty_string(), value.to_string());
+        }
     }
 
     #[test]
