@@ -1,73 +1,25 @@
-use std::collections::{HashMap, HashSet};
-use std::fmt::Write;
 use std::sync::{Arc, Mutex};
 
-use anyhow::{Context, Result};
 use cursive::View;
 use cursive::view::{Nameable, Resizable};
 use cursive::views::{self};
-use jsonpath_rust::JsonPath;
 
-use crate::json_helpers::extract_single_value;
-use crate::model::{ColumnExpression, LinkCondition, Resource, SearchParamType};
-use crate::sql_value_as_string::SQLValueAsString;
-use crate::to_sql::{sql_value_from_json_slice, sql_value_from_string};
+use dbdrill_core::model::Resource;
+use dbdrill_core::session::{QueryOutcome, Session, evaluate_link_condition};
+use dbdrill_core::shortcuts::assign_shortcuts;
+use dbdrill_core::value::{ResultSet, Row};
 
-struct AppData {
-    resources: HashMap<String, Resource>,
-    db: postgres::Client,
-}
+type AppDataPtr = Arc<Mutex<Session>>;
 
-type AppDataPtr = Arc<Mutex<AppData>>;
-
-pub fn start(db: postgres::Client, resources: HashMap<String, Resource>) {
+pub fn start(session: Session) {
     let mut siv = cursive::default();
     siv.add_global_callback('q', |s| s.quit());
 
-    let app_data_ptr = Arc::new(Mutex::new(AppData { resources, db }));
+    let app_data_ptr = Arc::new(Mutex::new(session));
     let router = Router::new(Arc::clone(&app_data_ptr));
     router.push(&mut siv, Box::new(RouteResourcePicker {}));
     // show_resource_picker_dialog(app_data_ptr, &mut siv);
     siv.run();
-}
-
-fn is_consonnant(c: char) -> bool {
-    !matches!(c, 'a' | 'e' | 'i' | 'o' | 'u')
-}
-
-fn assign_shortcuts<'a>(strs: impl IntoIterator<Item = &'a str>) -> Vec<Option<(usize, char)>> {
-    let mut assigned: HashSet<char> = HashSet::new();
-    let mut res: Vec<Option<(usize, char)>> = Vec::new();
-
-    'outer: for s in strs {
-        let mut is_prev_alphabetic = false;
-        let word_starts = s.chars().enumerate().filter(|(_, c)| {
-            let is_alphabetic = c.is_alphabetic();
-            let is_word_start = is_alphabetic && !is_prev_alphabetic;
-            is_prev_alphabetic = is_alphabetic;
-            is_word_start
-        });
-        let consonnants = s
-            .chars()
-            .enumerate()
-            .filter(|(_, c)| c.is_alphabetic() && is_consonnant(*c));
-        let all_alphas = s.chars().enumerate().filter(|(_, c)| c.is_alphabetic());
-
-        for (idx, c) in word_starts.chain(consonnants).chain(all_alphas) {
-            let c = c.to_lowercase().next().expect("error lowercasing");
-            if assigned.contains(&c) {
-                continue;
-            }
-
-            assigned.insert(c);
-            res.push(Some((idx, c)));
-            continue 'outer;
-        }
-
-        res.push(None);
-    }
-
-    res
 }
 
 fn build_shortcut_select_view<T: 'static + Send + Sync + Clone>(
@@ -118,9 +70,9 @@ fn build_shortcut_select_view<T: 'static + Send + Sync + Clone>(
 }
 
 fn get_resource(app_data_ptr: &AppDataPtr, resource_id: &str) -> Resource {
-    let app_data = app_data_ptr.lock().unwrap();
-    app_data
-        .resources
+    let session = app_data_ptr.lock().unwrap();
+    session
+        .resources()
         .get(resource_id)
         .expect("invalid resource id")
         .clone()
@@ -202,9 +154,9 @@ impl Route for RouteResourcePicker {
 fn build_resource_picker(app_data_ptr: AppDataPtr, router: &Router) -> impl cursive::view::View {
     let mut select_view = views::SelectView::new();
     {
-        let app_data = app_data_ptr.lock().unwrap();
+        let session = app_data_ptr.lock().unwrap();
 
-        for (k, v) in &app_data.resources {
+        for (k, v) in session.resources().iter() {
             select_view.add_item(v.name.as_str(), k.to_owned());
         }
     };
@@ -373,46 +325,6 @@ fn gather_query_parameter_strings(siv: &mut cursive::Cursive, param_names: &[&st
         .collect()
 }
 
-fn on_query_helper(
-    app_data_ptr: AppDataPtr,
-    resource_id: &str,
-    search_id: &str,
-    params_str_values: &[String],
-) -> Result<(String, Vec<postgres::Row>)> {
-    let r = get_resource(&app_data_ptr, resource_id);
-    let s = r.search.get(search_id).expect("invalid search id");
-    let mut title = String::new();
-    let mut param_values: Vec<Box<dyn postgres::types::ToSql + Sync>> = Vec::new();
-
-    write!(&mut title, "{} / {} (", r.name, search_id)?;
-
-    for (idx, (param, str_val)) in s.params.iter().zip(params_str_values.iter()).enumerate() {
-        if idx > 0 {
-            write!(&mut title, ", ")?;
-        }
-
-        write!(&mut title, "{}={}", param.name, str_val)?;
-
-        param_values.push(
-            sql_value_from_string(str_val, param.ty.clone().unwrap_or(SearchParamType::Text))
-                .with_context(|| format!("error parsing parameter {}", param.name))?,
-        );
-    }
-
-    write!(&mut title, ")")?;
-
-    let param_values_ref: Vec<&(dyn postgres::types::ToSql + Sync)> =
-        param_values.iter().map(|v| v.as_ref()).collect();
-
-    let mut app_data = app_data_ptr.lock().unwrap();
-    let rows = app_data
-        .db
-        .query(&s.query, &param_values_ref)
-        .context("error running SQL query")?;
-
-    Ok((title, rows))
-}
-
 fn on_query(
     app_data_ptr: AppDataPtr,
     siv: &mut cursive::Cursive,
@@ -423,47 +335,43 @@ fn on_query(
     let r = get_resource(&app_data_ptr, resource_id);
     let s = r.search.get(search_id).expect("invalid search id");
     let param_names: Vec<&str> = s.params.iter().map(|p| p.name.as_str()).collect();
+    let params = gather_query_parameter_strings(siv, param_names.as_slice());
 
-    match on_query_helper(
-        Arc::clone(&app_data_ptr),
-        resource_id,
-        search_id,
-        gather_query_parameter_strings(siv, param_names.as_slice()).as_slice(),
-    ) {
-        Ok((title, rows)) => {
-            router.push(
-                siv,
-                Box::new(QueryResultsRoute {
-                    resource_id: resource_id.to_owned(),
-                    title,
-                    rows,
-                }),
-            );
-        }
+    let outcome =
+        app_data_ptr
+            .lock()
+            .unwrap()
+            .run_search(resource_id, search_id, params.as_slice());
+
+    on_query_outcome(siv, router, outcome);
+}
+
+/// Shows the rows a query returned, or the reason it failed.
+fn on_query_outcome(
+    siv: &mut cursive::Cursive,
+    router: &Router,
+    outcome: anyhow::Result<QueryOutcome>,
+) {
+    match outcome {
+        Ok(outcome) => router.push(siv, Box::new(QueryResultsRoute { outcome })),
         Err(err) => {
             eprintln!("Error running query: {err:?}");
             siv.add_layer(views::Dialog::around(build_query_error(&err)));
         }
-    };
+    }
 }
 
-#[derive(Clone)]
-struct ResultRow(postgres::Row);
-
-type IndexedRow = (usize, ResultRow);
+type IndexedRow = (usize, Row);
 
 impl cursive_table_view::TableViewItem<TableColumn> for IndexedRow {
     fn to_column(&self, column: TableColumn) -> String {
         match column {
             TableColumn::Idx => self.0.to_string(),
-            TableColumn::DBCol(column) => {
-                let val: SQLValueAsString = self
-                    .1
-                    .0
-                    .try_get(column)
-                    .unwrap_or_else(|err| SQLValueAsString::new(err.to_string()));
-                val.take_string()
-            }
+            TableColumn::DBCol(column) => self
+                .1
+                .get(column)
+                .map(ToString::to_string)
+                .unwrap_or_default(),
         }
     }
 
@@ -482,18 +390,12 @@ impl cursive_table_view::TableViewItem<TableColumn> for IndexedRow {
     }
 }
 
-fn col_size<'a>(rows: &'a [postgres::Row], col: usize) -> usize {
-    let name_size = rows
-        .first()
-        .map(|row| row.columns()[col].name().len())
-        .unwrap_or(0);
+fn col_size(rows: &ResultSet, col: usize) -> usize {
+    let name_size = rows.columns().get(col).map(|c| c.name.len()).unwrap_or(0);
     let max_col_size = rows
+        .rows()
         .iter()
-        .map(|row| {
-            row.try_get::<'a, usize, SQLValueAsString>(col)
-                .map(|v| v.take_string().len())
-                .unwrap_or(0)
-        })
+        .map(|row| row.get(col).map(|v| v.to_string().len()).unwrap_or(0))
         .max()
         .unwrap_or(0);
 
@@ -504,9 +406,7 @@ fn col_size<'a>(rows: &'a [postgres::Row], col: usize) -> usize {
 }
 
 struct QueryResultsRoute {
-    resource_id: String,
-    title: String,
-    rows: Vec<postgres::Row>,
+    outcome: QueryOutcome,
 }
 
 impl Route for QueryResultsRoute {
@@ -516,9 +416,9 @@ impl Route for QueryResultsRoute {
             views::OnEventView::new(build_query_results(
                 Arc::clone(&app_data_ptr),
                 &router,
-                &self.resource_id,
-                &self.title,
-                &self.rows,
+                &self.outcome.resource_id,
+                &self.outcome.title,
+                &self.outcome.rows,
             ))
             .on_event(cursive::event::Key::Esc, move |siv| {
                 router.pop(siv);
@@ -542,29 +442,22 @@ fn build_query_results(
     router: &Router,
     resource_id: &str,
     title: &str,
-    rows: &[postgres::Row],
+    rows: &ResultSet,
 ) -> impl cursive::view::View {
-    let mut table = cursive_table_view::TableView::<(usize, ResultRow), TableColumn>::new();
+    let mut table = cursive_table_view::TableView::<IndexedRow, TableColumn>::new();
 
     if !rows.is_empty() {
-        let first = &rows[0];
-
         table.add_column(TableColumn::Idx, "#", |col| {
             col.width((rows.len().ilog10() + 1) as usize)
         });
 
-        for (idx, col) in first.columns().iter().enumerate() {
-            table.add_column(TableColumn::DBCol(idx), col.name(), |col| {
+        for (idx, col) in rows.columns().iter().enumerate() {
+            table.add_column(TableColumn::DBCol(idx), col.name.as_str(), |col| {
                 col.width(col_size(rows, idx))
             });
         }
 
-        table.set_items(
-            rows.iter()
-                .enumerate()
-                .map(|(idx, r)| (idx, ResultRow(r.clone())))
-                .collect(),
-        );
+        table.set_items(rows.rows().iter().cloned().enumerate().collect());
         table.set_on_submit(|siv: &mut cursive::Cursive, _row: usize, index: usize| {
             let (_, row) = siv
                 .call_on_name(
@@ -612,16 +505,12 @@ fn build_query_error(err: &anyhow::Error) -> impl cursive::view::View {
         }))
 }
 
-fn build_row_view<'a>(row: &'a ResultRow) -> impl cursive::view::View {
-    let row = &row.0;
+fn build_row_view(row: &Row) -> impl cursive::view::View {
     let mut values = views::LinearLayout::vertical();
 
-    for (idx, col) in row.columns().iter().enumerate() {
-        let view = match row.try_get::<'a, usize, SQLValueAsString>(idx) {
-            Ok(v) => cursive::views::TextView::new(v.as_str()),
-            Err(err) => cursive::views::TextView::new(err.to_string()),
-        };
-        values.add_child(views::Panel::new(view).title(col.name()));
+    for (col, value) in row.columns().iter().zip(row.values()) {
+        let view = cursive::views::TextView::new(value.to_string());
+        values.add_child(views::Panel::new(view).title(col.name.as_str()));
     }
 
     views::LinearLayout::vertical()
@@ -636,7 +525,7 @@ fn on_show_links(
     siv: &mut cursive::Cursive,
     router: &Router,
     resource_id: &str,
-    row: &ResultRow,
+    row: &Row,
 ) {
     siv.add_layer(views::Dialog::around(
         views::OnEventView::new(build_link_picker(
@@ -651,59 +540,25 @@ fn on_show_links(
     ));
 }
 
-fn evaluate_link_condition(cond: Option<LinkCondition>, row: &ResultRow) -> Result<bool> {
-    let Some(cond) = cond else {
-        return Ok(true);
-    };
-    let matches = match cond {
-        LinkCondition::Eq(ColumnExpression::Name(col_name), expected) => {
-            let val_str: SQLValueAsString = row
-                .0
-                .try_get(col_name.as_str())
-                .with_context(|| format!("error decoding column {col_name} as string"))?;
-            val_str.as_str() == expected
-        }
-        LinkCondition::Eq(
-            ColumnExpression::JsonPath {
-                col_and_path: (col_name, path),
-            },
-            expected,
-        ) => {
-            let col_value: serde_json::Value = row
-                .0
-                .try_get(col_name.as_str())
-                .with_context(|| format!("error decoding column {col_name} as json"))?;
-            let results = col_value
-                .query(&path)
-                .context("error evaluating JSONPath")?;
-            let val_str = extract_single_value(&results)?
-                .as_str()
-                .with_context(|| format!("dereferenced value {:?} is not a string", results[0]))?;
-            val_str == expected
-        }
-    };
-    Ok(matches)
-}
-
 fn build_link_picker(
     app_data_ptr: AppDataPtr,
     router: &Router,
     resource_id: &str,
-    row: &ResultRow,
+    row: &Row,
 ) -> impl cursive::view::View {
     let mut select_view = views::SelectView::new();
 
     let r = get_resource(&app_data_ptr, resource_id);
 
-    for (link_name, link) in r.links {
-        if !evaluate_link_condition(link.condition, row).unwrap_or_else(|err| {
+    for (link_name, link) in &r.links {
+        if !evaluate_link_condition(link.condition.as_ref(), row).unwrap_or_else(|err| {
             eprintln!("Error evaluating condition for link {link_name}: {err}");
             true
         }) {
             continue;
         }
 
-        select_view.add_item_str(link_name);
+        select_view.add_item_str(link_name.as_str());
     }
 
     select_view.sort_by_label();
@@ -729,163 +584,20 @@ fn build_link_picker(
         .child(build_shortcut_select_view(select_view, "link_picker"))
 }
 
-fn on_pick_link_helper(
-    app_data_ptr: AppDataPtr,
-    resource_id: &str,
-    link_name: &str,
-    row: &ResultRow,
-) -> Result<(String, String, Vec<postgres::Row>)> {
-    let r = get_resource(&app_data_ptr, resource_id);
-    let links = r.links;
-    let link = links.get(link_name).expect("invalid link name");
-    let link_target_resource = {
-        let app_data = app_data_ptr.lock().unwrap();
-        app_data
-            .resources
-            .get(&link.kind)
-            .expect("invalid link kind")
-            .clone()
-    };
-    let link_search = link_target_resource
-        .search
-        .get(&link.search)
-        .expect("invalid link search name");
-
-    let mut title = String::new();
-    let mut param_values: Vec<Box<dyn postgres::types::ToSql + Sync>> = Vec::new();
-
-    write!(&mut title, "{} (", r.name)?;
-
-    for (idx, (param, target_param)) in link
-        .search_params
-        .iter()
-        .zip(link_search.params.iter())
-        .enumerate()
-    {
-        let (param_value, title_item) = match param {
-            ColumnExpression::Name(name) => {
-                let col = row
-                    .0
-                    .columns()
-                    .iter()
-                    .find(|col| col.name() == name)
-                    .expect("invalid column name");
-                let col_ty = col.type_();
-
-                let val_title: SQLValueAsString = row
-                    .0
-                    .try_get(name.as_str())
-                    .unwrap_or_else(|err| SQLValueAsString::new(err.to_string()));
-
-                let val: Box<dyn postgres::types::ToSql + Sync> =
-                    if col_ty == &postgres::types::Type::TEXT {
-                        let val: Option<String> = row.0.get(name.as_str());
-                        Box::new(val)
-                    } else if col_ty == &postgres::types::Type::INT4 {
-                        let val: Option<i32> = row.0.get(name.as_str());
-                        Box::new(val)
-                    } else {
-                        todo!();
-                    };
-
-                (val, val_title.take_string())
-            }
-            ColumnExpression::JsonPath {
-                col_and_path: (col_name, path),
-            } => {
-                let col_value_title: SQLValueAsString = row
-                    .0
-                    .try_get(col_name.as_str())
-                    .unwrap_or_else(|err| SQLValueAsString::new(err.to_string()));
-                let col_value: serde_json::Value = row
-                    .0
-                    .try_get(col_name.as_str())
-                    .context("error parsing value as JSON")?;
-                let results = col_value.query(path).context("error dereferencing value")?;
-                let val = sql_value_from_json_slice(
-                    results.as_slice(),
-                    target_param.ty.clone().unwrap_or(SearchParamType::Text),
-                )?;
-
-                (val, format!("{path}={}", col_value_title.take_string()))
-            }
-        };
-
-        if idx > 0 {
-            write!(&mut title, ", ")?;
-        }
-
-        write!(&mut title, "{title_item}")?;
-
-        param_values.push(param_value);
-    }
-
-    write!(&mut title, ") → {link_name}")?;
-
-    let param_values_ref: Vec<&(dyn postgres::types::ToSql + Sync)> =
-        param_values.iter().map(|v| v.as_ref()).collect();
-
-    let mut app_data = app_data_ptr.lock().unwrap();
-
-    let rows = app_data
-        .db
-        .query(&link_search.query, &param_values_ref)
-        .context("error running SQL query")?;
-
-    Ok((link.kind.clone(), title, rows))
-}
-
 fn on_pick_link(
     app_data_ptr: AppDataPtr,
     siv: &mut cursive::Cursive,
     router: &Router,
     resource_id: &str,
     link_name: &str,
-    row: &ResultRow,
+    row: &Row,
 ) {
     siv.pop_layer(); // close the link picker
-    match on_pick_link_helper(Arc::clone(&app_data_ptr), resource_id, link_name, row) {
-        Ok((target_resource_id, title, rows)) => router.push(
-            siv,
-            Box::new(QueryResultsRoute {
-                resource_id: target_resource_id,
-                title,
-                rows,
-            }),
-        ),
-        Err(err) => {
-            eprintln!("Error running link query: {err:?}");
-            siv.add_layer(views::Dialog::around(build_query_error(&err)));
-        }
-    };
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+    let outcome = app_data_ptr
+        .lock()
+        .unwrap()
+        .follow_link(resource_id, link_name, row);
 
-    #[test]
-    fn test_assign_shortcuts() {
-        let items: Vec<&str> = vec![
-            "Case",
-            "Case list",
-            "Case list item",
-            "Presentation",
-            "Slide",
-            "Space",
-            "User",
-        ];
-        assert_eq!(
-            assign_shortcuts(items),
-            vec![
-                Some((0, 'c')),
-                Some((5, 'l')),
-                Some((10, 'i')),
-                Some((0, 'p')),
-                Some((0, 's')),
-                Some((2, 'a')),
-                Some((0, 'u')),
-            ]
-        );
-    }
+    on_query_outcome(siv, router, outcome);
 }

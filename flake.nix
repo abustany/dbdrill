@@ -26,8 +26,11 @@
 
         src = craneLib.cleanCargoSource ./.;
 
+        # The workspace root is a virtual manifest, so crane cannot infer these.
         craneCommonArgs = {
           inherit src;
+          pname = "dbdrill";
+          version = "0.1.0";
           strictDeps = true;
           buildInputs = [] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [];
         };
@@ -35,7 +38,10 @@
         cargoArtifacts = craneLib.buildDepsOnly craneCommonArgs;
 
         dbdrill = craneLib.buildPackage(
-          craneCommonArgs // { inherit cargoArtifacts; }
+          craneCommonArgs // {
+            inherit cargoArtifacts;
+            cargoExtraArgs = "--locked --package dbdrill-tui";
+          }
         );
       in
       with pkgs;
@@ -46,8 +52,12 @@
 
           dbdrill-clippy = craneLib.cargoClippy ( craneCommonArgs // { inherit cargoArtifacts; } );
           dbdrill-fmt = craneLib.cargoFmt { inherit src; };
+          dbdrill-test = craneLib.cargoTest ( craneCommonArgs // { inherit cargoArtifacts; } );
         };
-        packages.default = dbdrill;
+        packages = {
+          default = dbdrill;
+          inherit dbdrill;
+        };
         apps.default = flake-utils.lib.mkApp { drv = dbdrill; };
         devShells.default = mkShell {
           buildInputs = [

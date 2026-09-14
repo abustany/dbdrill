@@ -1,0 +1,15 @@
+[package]
+name = "dbdrill-tui"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "dbdrill"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+cursive.workspace = true
+cursive_table_view.workspace = true
+dbdrill-core.workspace = true

@@ -421,13 +421,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "dbdrill"
+name = "dbdrill-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "clap",
- "cursive",
- "cursive_table_view",
+ "bytes",
  "jiff",
  "jsonpath-rust",
  "native-tls",
@@ -437,6 +435,17 @@ dependencies = [
  "serde_json",
  "toml",
  "uuid",
+]
+
+[[package]]
+name = "dbdrill-tui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "cursive",
+ "cursive_table_view",
+ "dbdrill-core",
 ]
 
 [[package]]

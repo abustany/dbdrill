@@ -1,15 +1,10 @@
 use std::path::PathBuf;
-use std::{collections::HashMap, fs};
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
+use dbdrill_core::session::Session;
 
-mod model;
-use model::Resource;
-
-mod json_helpers;
-mod sql_value_as_string;
-mod to_sql;
 mod tui;
 
 #[derive(Parser)]
@@ -42,22 +37,14 @@ fn main() -> Result<()> {
     println!("Database DSN: {db_dsn}");
     println!("Resources file: {}", args.resources_file.display());
 
-    let resources: HashMap<String, Resource> = toml::from_str(
-        &fs::read_to_string(&args.resources_file).context("error opening resources file")?,
-    )
-    .context("error parsing resources files")?;
-
-    model::validate_resources(&resources).context("error validating resources")?;
+    let resources = Arc::new(
+        dbdrill_core::config::load(&args.resources_file).context("error loading resources file")?,
+    );
 
     println!("Connecting to the DB...");
-    let db_connector = native_tls::TlsConnector::builder()
-        .danger_accept_invalid_certs(true)
-        .build()
-        .context("error setting up TLS")?;
-    let db_connector = postgres_native_tls::MakeTlsConnector::new(db_connector);
-    let db = postgres::Client::connect(&db_dsn, db_connector).context("error connecting to DB")?;
+    let session = Session::connect(&db_dsn, resources)?;
 
-    tui::start(db, resources);
+    tui::start(session);
 
     Ok(())
 }
