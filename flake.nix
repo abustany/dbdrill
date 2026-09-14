@@ -32,7 +32,14 @@
           pname = "dbdrill";
           version = "0.1.0";
           strictDeps = true;
-          buildInputs = [] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [];
+          nativeBuildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [
+            pkgs.pkg-config
+          ];
+          # native-tls uses OpenSSL on Linux, and the Security framework on
+          # Darwin.
+          buildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [
+            pkgs.openssl
+          ];
         };
 
         cargoArtifacts = craneLib.buildDepsOnly craneCommonArgs;
@@ -41,6 +48,34 @@
           craneCommonArgs // {
             inherit cargoArtifacts;
             cargoExtraArgs = "--locked --package dbdrill-tui";
+          }
+        );
+
+        # winit and glutin dlopen the windowing and GL libraries, so they never
+        # show up in the binary as ELF dependencies. Put them in the RPATH by
+        # hand, otherwise the GUI only starts where the host happens to provide
+        # them.
+        guiRuntimeLibs = with pkgs; [
+          libGL
+          libxkbcommon
+          wayland
+          xorg.libX11
+          xorg.libXcursor
+          xorg.libXi
+          xorg.libXinerama
+          xorg.libXrender
+          xorg.libxcb
+        ];
+
+        dbdrillui = craneLib.buildPackage(
+          craneCommonArgs // {
+            inherit cargoArtifacts;
+            pname = "dbdrillui";
+            cargoExtraArgs = "--locked --package dbdrill-egui";
+            postFixup = pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+              patchelf --add-rpath ${pkgs.lib.makeLibraryPath guiRuntimeLibs} \
+                $out/bin/dbdrillui
+            '';
           }
         );
       in
@@ -56,7 +91,7 @@
         };
         packages = {
           default = dbdrill;
-          inherit dbdrill;
+          inherit dbdrill dbdrillui;
         };
         apps.default = flake-utils.lib.mkApp { drv = dbdrill; };
         devShells.default = mkShell {

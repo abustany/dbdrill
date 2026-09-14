@@ -114,9 +114,11 @@ impl Session {
         let (param_titles, values) = link_params(link, search, row)?;
 
         let mut title = String::new();
+        // Plain ASCII: an arrow glyph is missing from more fonts than you would
+        // think, and comes out as an empty box.
         write!(
             &mut title,
-            "{} ({}) → {link_name}",
+            "{} ({}) -> {link_name}",
             resource.name,
             param_titles.join(", ")
         )?;

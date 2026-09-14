@@ -2,7 +2,13 @@
 
 *Navigate the entities in your database at the speed of light ⚡️*
 
+**TUI version**
+
 ![dbdrill screencast](docs/screencast.gif)
+
+**GUI version**
+
+![dbdrillui screencast](docs/screencast-gui.avif)
 
 There are plenty of good UIs to manage SQL databases. There are lots of good
 tools to explore SQL schemas. Dbdrill is something else. It allows you to:
@@ -27,7 +33,8 @@ Run `cargo run` to build and run dbdrill.
 
 ### Using Nix
 
-You can run dbdrill using `nix run 'github:abustany/dbdrill'`
+You can run the TUI version using `nix run 'github:abustany/dbdrill'`, and the
+GUI version using `nix run 'github:abustany/dbdrill#dbdrillui'`
 
 Alternatively, you can use `github:abustany/dbdrill` as a flake input.
 

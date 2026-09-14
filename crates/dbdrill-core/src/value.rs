@@ -3,7 +3,12 @@ use std::fmt;
 use std::sync::Arc;
 
 use bytes::BytesMut;
-use postgres::types::{FromSql, IsNull, ToSql, Type, to_sql_checked};
+use postgres::types::{FromSql, IsNull, ToSql, to_sql_checked};
+
+/// The SQL type of a [`Column`].
+///
+/// Re-exported so that using a result set does not drag in `postgres`.
+pub use postgres::types::Type;
 
 type SqlResult<T> = std::result::Result<T, Box<dyn std::error::Error + Sync + Send>>;
 

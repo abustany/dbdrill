@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/dbdrill-core", "crates/dbdrill-tui"]
+members = ["crates/dbdrill-core", "crates/dbdrill-egui", "crates/dbdrill-tui"]
 
 [workspace.package]
 version = "0.1.0"
@@ -13,6 +13,8 @@ clap = { version = "4.5.48", features = ["derive", "env"] }
 cursive = "0.21.1"
 cursive_table_view = "0.15.0"
 dbdrill-core = { path = "crates/dbdrill-core" }
+eframe = { version = "0.36.2", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+egui = "0.36.2"
 jiff = "0.2.15"
 jsonpath-rust = "1.0.4"
 native-tls = "0.2.14"
