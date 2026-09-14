@@ -105,21 +105,21 @@ pub struct Resource {
 
 fn validate_resource_link(resources: &HashMap<String, Resource>, link: &Link) -> Result<()> {
     let Some(target_resource) = resources.get(&link.kind) else {
-        bail!("link references a non existing resource {}", &link.kind);
+        bail!("link references a non existing resource {}", link.kind);
     };
 
     let Some(target_search) = target_resource.search.get(&link.search) else {
         bail!(
             "referenced resource {} has no search named {}",
-            &link.kind,
-            &link.search
+            link.kind,
+            link.search
         );
     };
 
     if target_search.params.len() != link.search_params.len() {
         bail!(
             "referenced search {} has {} params but link specifies {}",
-            &link.search,
+            link.search,
             target_search.params.len(),
             link.search_params.len()
         );

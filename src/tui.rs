@@ -291,7 +291,7 @@ fn build_search_picker(
         });
     }
 
-    let title = format!("Search {} by...", &r.name);
+    let title = format!("Search {} by...", r.name);
 
     views::LinearLayout::vertical()
         .child(views::TextView::new(&title))
@@ -334,7 +334,7 @@ fn build_query(
     let r = get_resource(&app_data_ptr, resource_id);
     let s = r.search.get(search_id).expect("invalid search id");
 
-    let title = format!("Search {} by {}", &r.name, search_id);
+    let title = format!("Search {} by {}", r.name, search_id);
     let mut layout = views::LinearLayout::vertical().child(views::TextView::new(&title));
 
     for param in &s.params {
@@ -384,14 +384,14 @@ fn on_query_helper(
     let mut title = String::new();
     let mut param_values: Vec<Box<dyn postgres::types::ToSql + Sync>> = Vec::new();
 
-    write!(&mut title, "{} / {} (", &r.name, search_id)?;
+    write!(&mut title, "{} / {} (", r.name, search_id)?;
 
     for (idx, (param, str_val)) in s.params.iter().zip(params_str_values.iter()).enumerate() {
         if idx > 0 {
             write!(&mut title, ", ")?;
         }
 
-        write!(&mut title, "{}={}", &param.name, &str_val)?;
+        write!(&mut title, "{}={}", param.name, str_val)?;
 
         param_values.push(
             sql_value_from_string(str_val, param.ty.clone().unwrap_or(SearchParamType::Text))
@@ -754,7 +754,7 @@ fn on_pick_link_helper(
     let mut title = String::new();
     let mut param_values: Vec<Box<dyn postgres::types::ToSql + Sync>> = Vec::new();
 
-    write!(&mut title, "{} (", &r.name)?;
+    write!(&mut title, "{} (", r.name)?;
 
     for (idx, (param, target_param)) in link
         .search_params

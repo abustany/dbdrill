@@ -1,5 +1,5 @@
 [toolchain]
-channel = "1.88.0"
+channel = "1.98.1"
 profile = "minimal"
 # See https://rust-lang.github.io/rustup/concepts/components.html
 components = ["rustc", "cargo", "rustfmt", "rust-std", "rust-analyzer", "clippy", "rust-src"]
