@@ -136,12 +136,17 @@ impl Session {
             .map(|value| value as &(dyn postgres::types::ToSql + Sync))
             .collect();
 
+        // Preparing the query first gives us the columns it returns, even when
+        // it matches no row. `Client::query` prepares anyway when handed a
+        // string, so this costs no extra round trip.
+        let statement = self.db.prepare(sql).context("error preparing SQL query")?;
+
         let rows = self
             .db
-            .query(sql, &params)
+            .query(&statement, &params)
             .context("error running SQL query")?;
 
-        Ok(ResultSet::from_postgres_rows(&rows))
+        Ok(ResultSet::from_postgres_rows(statement.columns(), &rows))
     }
 }
 

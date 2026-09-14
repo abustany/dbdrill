@@ -190,21 +190,17 @@ impl ResultSet {
 
     /// Decodes the rows returned by a query.
     ///
-    /// The column list is read off the first row, so a query returning no rows
-    /// yields a result set with no columns.
-    pub(crate) fn from_postgres_rows(rows: &[postgres::Row]) -> Self {
-        let columns: Vec<Column> = rows
-            .first()
-            .map(|row| {
-                row.columns()
-                    .iter()
-                    .map(|col| Column {
-                        name: col.name().to_owned(),
-                        ty: col.type_().clone(),
-                    })
-                    .collect()
+    /// `columns` comes from the prepared statement rather than from the rows,
+    /// so a query returning no rows still describes what it would have
+    /// returned.
+    pub(crate) fn from_postgres_rows(columns: &[postgres::Column], rows: &[postgres::Row]) -> Self {
+        let columns: Vec<Column> = columns
+            .iter()
+            .map(|col| Column {
+                name: col.name().to_owned(),
+                ty: col.type_().clone(),
             })
-            .unwrap_or_default();
+            .collect();
 
         let values = rows
             .iter()
@@ -360,6 +356,21 @@ mod tests {
         assert_eq!(row.column_index("name"), Some(1));
         assert_eq!(row.get_by_name("name"), Some(&Value::Text("a".to_owned())));
         assert_eq!(row.get_by_name("missing"), None);
+    }
+
+    #[test]
+    fn a_result_set_without_rows_still_has_columns() {
+        let set = ResultSet::new(
+            vec![Column {
+                name: "id".to_owned(),
+                ty: Type::INT4,
+            }],
+            Vec::new(),
+        );
+
+        assert!(set.is_empty());
+        assert_eq!(set.len(), 0);
+        assert_eq!(set.columns().len(), 1);
     }
 
     #[test]

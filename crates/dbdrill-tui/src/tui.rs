@@ -390,6 +390,12 @@ impl cursive_table_view::TableViewItem<TableColumn> for IndexedRow {
     }
 }
 
+/// Width of the row number column, wide enough for the largest row number.
+fn index_col_width(row_count: usize) -> usize {
+    // `ilog10` is undefined on 0, and an empty result still needs a column.
+    (row_count.max(1).ilog10() + 1) as usize
+}
+
 fn col_size(rows: &ResultSet, col: usize) -> usize {
     let name_size = rows.columns().get(col).map(|c| c.name.len()).unwrap_or(0);
     let max_col_size = rows
@@ -446,9 +452,9 @@ fn build_query_results(
 ) -> impl cursive::view::View {
     let mut table = cursive_table_view::TableView::<IndexedRow, TableColumn>::new();
 
-    if !rows.is_empty() {
+    if !rows.columns().is_empty() {
         table.add_column(TableColumn::Idx, "#", |col| {
-            col.width((rows.len().ilog10() + 1) as usize)
+            col.width(index_col_width(rows.len()))
         });
 
         for (idx, col) in rows.columns().iter().enumerate() {
@@ -600,4 +606,21 @@ fn on_pick_link(
         .follow_link(resource_id, link_name, row);
 
     on_query_outcome(siv, router, outcome);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn index_col_width_fits_the_largest_row_number() {
+        // An empty result still renders its columns, so a width of 0 rows must
+        // not be a special case.
+        assert_eq!(index_col_width(0), 1);
+        assert_eq!(index_col_width(1), 1);
+        assert_eq!(index_col_width(9), 1);
+        assert_eq!(index_col_width(10), 2);
+        assert_eq!(index_col_width(999), 3);
+        assert_eq!(index_col_width(1000), 4);
+    }
 }
