@@ -258,6 +258,7 @@ impl Ui {
             Harness::new_ui_state(|ui, app: &mut App| app.show(ui), App::new(resources(), db));
 
         harness.set_size(WINDOW);
+        crate::hints::install_fonts(&harness.ctx);
 
         // Scrolling instantly rather than over a few frames, so that what the
         // window shows depends on what the user did rather than on how long a
@@ -368,6 +369,12 @@ impl Ui {
         }
     }
 
+    /// Runs as though on `os`, which decides how the copy shortcut is spelled.
+    fn on_platform(&mut self, os: egui::os::OperatingSystem) {
+        self.harness.ctx.set_os(os);
+        self.settle();
+    }
+
     fn press(&mut self, key: egui::Key) {
         self.act(|harness| harness.key_press(key));
     }
@@ -459,6 +466,28 @@ impl Ui {
             .collect()
     }
 
+    /// The bar across the bottom of the window: the keyboard hints, which are
+    /// whatever shares a line with the bottommost thing drawn.
+    fn hints(&self) -> Vec<String> {
+        let drawn = self.window();
+        let Some((last, _)) = drawn.last() else {
+            return Vec::new();
+        };
+
+        drawn
+            .iter()
+            .filter(|(rect, _)| rect.bottom() > last.top())
+            .map(|(_, label)| label.clone())
+            .collect()
+    }
+
+    /// Where the bottom bar starts, so that the body can stop above it.
+    fn hints_top(&self) -> f32 {
+        self.window()
+            .last()
+            .map_or(f32::INFINITY, |(rect, _)| rect.top())
+    }
+
     /// The steps of the trail, left to right, ending on the view we are on.
     fn trail(&self) -> Vec<String> {
         self.top_bar()
@@ -475,17 +504,22 @@ impl Ui {
             .unwrap_or_default()
     }
 
-    /// Everything under the bar, gathered into the lines it was drawn on.
+    /// Everything between the two bars, gathered into the lines it was drawn
+    /// on.
     fn body(&self) -> Vec<Vec<String>> {
         let drawn = self.window();
         let Some((first, _)) = drawn.first() else {
             return Vec::new();
         };
         let bar = first.bottom();
+        let hints = self.hints_top();
 
         let mut lines: Vec<(f32, Vec<(f32, String)>)> = Vec::new();
 
-        for (rect, label) in drawn.iter().filter(|(rect, _)| rect.top() >= bar) {
+        for (rect, label) in drawn
+            .iter()
+            .filter(|(rect, _)| rect.top() >= bar && rect.bottom() <= hints)
+        {
             let middle = rect.center().y;
 
             // What is drawn side by side is drawn at the same height, so
@@ -848,4 +882,113 @@ fn what_goes_wrong_is_reported_rather_than_hidden() {
     ui.type_text("e");
 
     assert!(ui.shows("Nothing here"));
+}
+
+/// The bar along the bottom, which is the only place the shortcuts are
+/// written down.
+#[test]
+fn the_bottom_bar_says_which_keys_work_here() {
+    let mut ui = Ui::new();
+
+    // Pinned so that the copy shortcut is spelled the same wherever the tests
+    // run. Both spellings are checked further down.
+    ui.on_platform(egui::os::OperatingSystem::Mac);
+
+    // There is nowhere to go back to from the first view, so Escape is not
+    // offered.
+    assert_eq!(
+        ui.hints(),
+        ["a-z: pick a resource", "↑/↓: move", "Enter: choose"]
+    );
+
+    ui.type_text("u");
+
+    assert_eq!(
+        ui.hints(),
+        [
+            "a-z: pick a search",
+            "↑/↓: move",
+            "Enter: choose",
+            "Esc: go back"
+        ]
+    );
+
+    // Filling a search in is a form rather than a list, and answers to other
+    // keys accordingly.
+    ui.type_text("e");
+
+    assert_eq!(
+        ui.hints(),
+        ["Tab: next field", "Enter: search", "Esc: go back"]
+    );
+
+    ui.type_text("a@example.com");
+    ui.press(egui::Key::Enter);
+
+    assert_eq!(
+        ui.hints(),
+        [
+            "j/k: navigate",
+            "←/→: columns",
+            "Enter: open the row",
+            "Cmd-C: copy the cell",
+            "l: links",
+            "Esc: go back",
+        ]
+    );
+
+    // The copy shortcut is spelled the way the platform spells it.
+    ui.on_platform(egui::os::OperatingSystem::Windows);
+    assert!(ui.hints().contains(&"Ctrl-C: copy the cell".to_owned()));
+    ui.on_platform(egui::os::OperatingSystem::Mac);
+
+    // An open row takes every key for itself, Escape included.
+    ui.press(egui::Key::Enter);
+    assert_eq!(ui.hints(), ["Esc: close the row"]);
+
+    ui.press(egui::Key::Escape);
+    assert_eq!(ui.hints().len(), 6, "closing the row left the results");
+
+    ui.press(egui::Key::L);
+
+    assert_eq!(
+        ui.hints(),
+        [
+            "a-z: pick a link",
+            "↑/↓: move",
+            "Enter: choose",
+            "Esc: go back"
+        ]
+    );
+
+    // Posts cannot be followed anywhere, so there is no point offering it.
+    ui.type_text("p");
+
+    assert_eq!(
+        ui.hints(),
+        [
+            "j/k: navigate",
+            "←/→: columns",
+            "Enter: open the row",
+            "Cmd-C: copy the cell",
+            "Esc: go back",
+        ]
+    );
+}
+
+/// A result with nothing to move around in offers nothing to move around with.
+#[test]
+fn a_result_with_no_rows_offers_only_the_way_back() {
+    let mut ui = Ui::new().replying(|_| {
+        outcome(
+            "user",
+            "User / everyone ()",
+            ResultSet::new(user_columns(), Vec::new()),
+        )
+    });
+
+    ui.type_text("u");
+    ui.type_text("v");
+
+    assert_eq!(ui.hints(), ["Esc: go back"]);
 }

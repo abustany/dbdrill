@@ -9,6 +9,8 @@ use std::cmp::Ordering;
 use dbdrill_core::value::{ResultSet, Row, Value};
 use egui_extras::{Column, TableBuilder};
 
+use crate::hints::{self, Hint};
+
 /// Widest a column is to start with, in characters. Columns can be dragged
 /// wider, so this only decides what is worth showing before anyone touches it.
 const MAX_INITIAL_COL_CHARS: usize = 60;
@@ -125,7 +127,42 @@ impl Table {
         }
     }
 
-    /// Draws the table, and reports whether the user asked to go back.
+    /// What the table answers to, for the bar at the bottom of the window.
+    ///
+    /// Kept next to [`read_keys`], which is what it describes. Escape is left
+    /// out unless the table takes it for itself, which it does only while a
+    /// row is open; the rest of the time it means going back, which is not the
+    /// table's to say.
+    pub fn hints(&self, ui: &egui::Ui, rows: &ResultSet, links: bool) -> Vec<Hint> {
+        // An open row swallows every other key, so nothing else is on offer.
+        if self.detail {
+            return vec![Hint::new("Esc", "close the row")];
+        }
+
+        // Nothing to move around in, and nothing to copy or follow.
+        if rows.is_empty() || rows.columns().is_empty() {
+            return Vec::new();
+        }
+
+        let mut hints = vec![
+            Hint::new("j/k", "navigate"),
+            Hint::new("\u{2190}/\u{2192}", "columns"),
+            Hint::new("Enter", "open the row"),
+            Hint::new(hints::copy_keys(ui.ctx().os()), "copy current cell"),
+        ];
+
+        if links {
+            hints.push(Hint::new("l", "links"));
+        }
+
+        hints
+    }
+
+    /// Whether the full row is open over the table.
+    pub fn detail_open(&self) -> bool {
+        self.detail
+    }
+
     /// Draws the table, and reports what the user asked for.
     pub fn show(&mut self, ui: &mut egui::Ui, rows: &ResultSet) -> Action {
         if rows.columns().is_empty() {

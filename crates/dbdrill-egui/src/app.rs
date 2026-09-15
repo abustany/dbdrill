@@ -4,6 +4,7 @@ use dbdrill_core::session::{QueryOutcome, Resources, evaluate_link_condition};
 use dbdrill_core::value::Row;
 
 use crate::db::{Db, Event, RequestId};
+use crate::hints::{self, Hint};
 use crate::picker::{Action, Picker};
 use crate::results;
 
@@ -263,6 +264,14 @@ impl App {
             });
         });
 
+        // Shown before the error panel, so that the hints stay along the very
+        // bottom of the window and an error appears above them rather than
+        // pushing them about.
+        egui::Panel::bottom("hints").show(ui, |ui| {
+            let hints = self.hints(ui);
+            hints::show(ui, &hints);
+        });
+
         if let Some(error) = self.error.clone() {
             egui::Panel::bottom("error").show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -361,6 +370,44 @@ impl App {
                 None => "Links".to_owned(),
             },
         }
+    }
+
+    /// The shortcuts that work on the view we are on.
+    ///
+    /// Each view says what it answers to itself; all that is decided here is
+    /// which of them is on, and whether Escape still means going back.
+    fn hints(&self, ui: &egui::Ui) -> Vec<Hint> {
+        let view = self.stack.last().expect("the view stack is never empty");
+
+        let mut hints = match view {
+            View::Resources { .. } => Picker::hints("pick a resource"),
+            View::Searches { .. } => Picker::hints("pick a search"),
+            View::Links { .. } => Picker::hints("pick a link"),
+            View::Params { .. } => params_hints(),
+            View::Results { outcome, table } => {
+                table.hints(ui, &outcome.rows, self.has_links(&outcome.resource_id))
+            }
+        };
+
+        // An open row takes Escape for itself, and offers it in its own hints.
+        let takes_escape = matches!(view, View::Results { table, .. } if table.detail_open());
+
+        if self.can_go_back() && !takes_escape {
+            hints.push(Hint::new("Esc", "go back"));
+        }
+
+        hints
+    }
+
+    /// Whether rows of `resource_id` can be followed anywhere at all.
+    ///
+    /// Only asks whether the resource has links, not whether any of them apply
+    /// to the selected row: working that out means evaluating their conditions,
+    /// which is not worth doing every frame for the sake of one hint.
+    fn has_links(&self, resource_id: &str) -> bool {
+        self.resources
+            .get(resource_id)
+            .is_some_and(|resource| !resource.links.is_empty())
     }
 
     fn show_status(&self, ui: &mut egui::Ui) {
@@ -485,6 +532,14 @@ enum Params {
     Editing,
     Submitted,
     Dismissed,
+}
+
+/// What the parameter form answers to, for the bar at the bottom of the
+/// window. Kept next to [`show_params`], which is what it describes.
+///
+/// Tab is egui's own, not ours, but it is still what moves between the fields.
+fn params_hints() -> Vec<Hint> {
+    vec![Hint::new("Tab", "next field"), Hint::new("Enter", "search")]
 }
 
 fn show_params(

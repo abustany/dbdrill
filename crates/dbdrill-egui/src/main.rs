@@ -6,6 +6,7 @@ use clap::Parser;
 
 mod app;
 mod db;
+mod hints;
 #[cfg(target_os = "macos")]
 mod macos_menu;
 mod picker;
@@ -58,6 +59,7 @@ fn main() -> Result<()> {
         options,
         Box::new(move |cc| {
             cc.egui_ctx.set_theme(egui::ThemePreference::Dark);
+            hints::install_fonts(&cc.egui_ctx);
 
             // A menu bar we cannot install is not worth failing to start over.
             #[cfg(target_os = "macos")]

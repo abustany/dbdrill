@@ -8,6 +8,8 @@
 use dbdrill_core::shortcuts::assign_shortcuts;
 use egui::text::LayoutJob;
 
+use crate::hints::Hint;
+
 /// What the user did with the list this frame.
 pub enum Action {
     None,
@@ -25,6 +27,22 @@ pub struct Picker {
 }
 
 impl Picker {
+    /// What the picker answers to, for the bar at the bottom of the window.
+    ///
+    /// `pick` names what the letters choose here, which is the only thing that
+    /// changes from one list to the next.
+    ///
+    /// Kept next to [`Picker::handle_keys`], which is what it describes. Escape
+    /// is left out: whether there is anywhere to go back to is not the
+    /// picker's to know.
+    pub fn hints(pick: &str) -> Vec<Hint> {
+        vec![
+            Hint::new("a-z", pick),
+            Hint::new("\u{2191}/\u{2193}", "move"),
+            Hint::new("Enter", "choose"),
+        ]
+    }
+
     pub fn show(&mut self, ui: &mut egui::Ui, items: &[String]) -> Action {
         self.selected = self.selected.min(items.len().saturating_sub(1));
 
