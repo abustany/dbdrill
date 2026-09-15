@@ -26,11 +26,11 @@
 
         src = craneLib.cleanCargoSource ./.;
 
-        # The workspace root is a virtual manifest, so crane cannot infer these.
+        version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
+
         craneCommonArgs = {
-          inherit src;
+          inherit src version;
           pname = "dbdrill";
-          version = "0.1.0";
           strictDeps = true;
           nativeBuildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [
             pkgs.pkg-config
