@@ -27,9 +27,25 @@ features may be incomplete.
 
 ## Installation
 
+### Using cargo
+
+**To install the TUI**
+
+```
+$ cargo install --git https://github.com/abustany/dbdrill dbdrill-tui
+$ dbdrill --help
+```
+
+**To install the GUI**
+
+```
+$ cargo install --git https://github.com/abustany/dbdrill dbdrill-egui
+$ dbdrillui --help
+```
+
 ### From source
 
-Run `cargo run` to build and run dbdrill.
+Run `cargo run -p dbdrill-tui` or `cargo run -p dbdrill-egui` to build and run dbdrill.
 
 ### Using Nix
 
